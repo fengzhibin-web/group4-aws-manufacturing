@@ -1,0 +1,7 @@
+timestamp,machine_id,shift,product_id,supplier_batch,temperature,defect_label
+2026-09-01T08:00:00,M01,Day,P01,SB-201,72.1,0
+2026-09-01T08:01:00,M01,Day,P01,SB-201,73.0,1
+2026-09-01T23:00:00,M03,Night,P02,SB-204,91.3,1
+2026-09-01T23:01:00,M03,Night,P02,SB-204,89.7,1
+2026-09-01T23:01:00,M03,Night,P02,SB-204,89.7,1
+2026-09-02T08:00:00,M02,Day,P02,SB-203,71.0,0

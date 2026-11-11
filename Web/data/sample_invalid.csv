@@ -1,0 +1,2 @@
+timestamp,machine_id,shift,product_id,temperature,defect_label
+2026-09-01T08:00:00,M01,Day,P01,72.1,0
