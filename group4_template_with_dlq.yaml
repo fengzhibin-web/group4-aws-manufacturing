@@ -1,0 +1,163 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Group 4 manufacturing data quality serverless application (rebuild from source).
+Parameters:
+  DataBucketName:
+    Type: String
+    Description: Globally unique bucket name for uploaded CSV and reports.
+  ArtifactBucketName:
+    Type: String
+    Description: Existing artifact bucket containing functions/validate.zip and functions/process.zip.
+  ExistingRoleName:
+    Type: String
+    Default: LabRole
+    Description: Existing Lambda execution role. No IAM role is created by this template.
+Resources:
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: group4-mfg-dlq
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+  JobsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: group4-mfg-jobs
+      VisibilityTimeout: 180
+      MessageRetentionPeriod: 345600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt DeadLetterQueue.Arn
+        maxReceiveCount: 5
+  JobsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    Properties:
+      TableName: group4-mfg-jobs
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: job_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: job_id
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+  ValidateFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: group4-validate
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      Role: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ExistingRoleName}'
+      Architectures: [x86_64]
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          JOB_TABLE_NAME: !Ref JobsTable
+          JOB_QUEUE_URL: !Ref JobsQueue
+      Code:
+        S3Bucket: !Ref ArtifactBucketName
+        S3Key: functions/validate.zip
+  ProcessFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: group4-process
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      Role: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ExistingRoleName}'
+      Architectures: [x86_64]
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          JOB_TABLE_NAME: !Ref JobsTable
+      Code:
+        S3Bucket: !Ref ArtifactBucketName
+        S3Key: functions/process.zip
+  S3InvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt ValidateFunction.Arn
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub 'arn:${AWS::Partition}:s3:::${DataBucketName}'
+  DataBucket:
+    Type: AWS::S3::Bucket
+    DependsOn: S3InvokePermission
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Ref DataBucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: raw/
+                  - Name: suffix
+                    Value: .csv
+            Function: !GetAtt ValidateFunction.Arn
+  JobsQueueConsumer:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt JobsQueue.Arn
+      FunctionName: !GetAtt ProcessFunction.Arn
+      Enabled: true
+      BatchSize: 1
+  # New: DLQ -> status reconciliation Lambda. Does not change existing consumers.
+  DlqStatusFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: group4-dlq-status
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      Role: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ExistingRoleName}'
+      Architectures: [x86_64]
+      Timeout: 5
+      MemorySize: 128
+      Environment:
+        Variables:
+          JOB_TABLE_NAME: !Ref JobsTable
+      Code:
+        S3Bucket: !Ref ArtifactBucketName
+        S3Key: functions/dlq-status-v1.zip
+  DlqStatusConsumer:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt DeadLetterQueue.Arn
+      FunctionName: !GetAtt DlqStatusFunction.Arn
+      Enabled: true
+      BatchSize: 1
+
+Outputs:
+  DataBucket:
+    Value: !Ref DataBucket
+  MainQueueUrl:
+    Value: !Ref JobsQueue
+  MainQueueArn:
+    Value: !GetAtt JobsQueue.Arn
+  DeadLetterQueueUrl:
+    Value: !Ref DeadLetterQueue
+  TableName:
+    Value: !Ref JobsTable
+  ValidateLambda:
+    Value: !Ref ValidateFunction
+  ProcessLambda:
+    Value: !Ref ProcessFunction
+  DLQStatusLambda:
+    Value: !Ref DlqStatusFunction
