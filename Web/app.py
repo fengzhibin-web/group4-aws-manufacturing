@@ -6,7 +6,6 @@ Local demo does NOT call AWS. AWS mode requires the separately deployed API.
 from __future__ import annotations
 
 import io
-import hmac
 import json
 import os
 from pathlib import Path
@@ -35,31 +34,6 @@ def _cfg(key):
         return st.secrets.get(key, os.environ.get(key, ""))
     except Exception:
         return os.environ.get(key, "")
-
-
-def _access_gate() -> None:
-    """Small private-classroom guard, NOT production user authentication."""
-    password = str(_cfg("APP_PASSWORD"))
-    configured_aws = bool(_cfg("AWS_API_BASE_URL") or _cfg("DEMO_API_KEY"))
-    if configured_aws and not password:
-        st.error("AWS连接已配置，但缺少APP_PASSWORD。为防止公开访问滥用云端资源，请先为Web设置访问密码。")
-        st.stop()
-    if not password or st.session_state.get("_logged_in", False):
-        return
-    st.title("🔐 Group 4 Dashboard")
-    st.info("请输入课程演示密码访问制造业质量分析页面。")
-    with st.form("web_login", clear_on_submit=True):
-        submitted_password = st.text_input("演示访问密码", type="password")
-        submitted = st.form_submit_button("进入Dashboard", type="primary")
-    if submitted:
-        if hmac.compare_digest(submitted_password, password):
-            st.session_state["_logged_in"] = True
-            st.rerun()
-        st.error("密码不正确")
-    st.stop()
-
-
-_access_gate()
 
 
 def _api():
