@@ -1,0 +1,8 @@
+# No credentials or local environment files in git
+.streamlit/secrets.toml
+.env
+.env.*
+__pycache__/
+.pytest_cache/
+*.pyc
+.venv/
