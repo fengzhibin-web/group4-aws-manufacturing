@@ -314,7 +314,7 @@ if st.session_state.get("_last_mode")!=mode:
 st.caption(label("mode_help_aws" if is_aws else "mode_help_local"))
 if is_aws:
     if _cfg("AWS_API_BASE_URL") and _cfg("DEMO_API_KEY"):
-        st.success(label("aws_ready"),icon="✓")
+        st.success(label("aws_ready"),icon="✅")
     else:
         st.warning(label("aws_missing"))
     st.caption(label("web_warning"))
@@ -354,7 +354,7 @@ with left:
             valid=not bool(check["errors"])
             st.caption(f'📄 {file_name} · {len(raw):,} bytes · {label("job")}: `{check["job_id"]}`')
             if valid:
-                st.success(f'{label("ready")} · {check["rows"]:,} rows',icon="✓")
+                st.success(f'{label("ready")} · {check["rows"]:,} rows',icon="✅")
             else:
                 for err in _translate_warnings(check["errors"]):st.error(err)
             with st.expander(label("file_preview"),expanded=False):
