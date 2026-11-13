@@ -13,6 +13,7 @@ import html
 import io
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -84,12 +85,12 @@ LANG = {
     "choose":"Drag and drop your CSV here", "sample":"Load sample CSV", "reset":"Reset", "run_local":"Run local analysis", "run_aws":"Upload to AWS", "file":"Dataset", "not_selected":"No file selected", "mode":"Execution mode",
     "local":"Local demo · No AWS", "aws":"AWS cloud mode", "mode_help_local":"Local analysis runs on the Streamlit host; it does not call AWS.", "mode_help_aws":"AWS mode uses a presigned S3 upload and the existing API Gateway endpoints.",
     "rules":"7 required fields · Max 10 MiB · Up to 50,000 rows (UI)","ready":"Structure validated", "invalid":"Input validation failed", "warnings":"Review warnings", "file_preview":"CSV preview",
-    "pipeline":"02 / Processing pipeline", "pipeline_sub":"Visual milestones derived from available status; not measured stage durations.","job":"Job ID", "pending":"Awaiting submission", "progress":"Milestone progress (illustrative)","complete":"Completed", "failed":"Failed", "in_progress":"In progress", "waiting":"Waiting", "events":"UI activity log (not CloudWatch)",
+    "pipeline":"02 / Processing pipeline", "pipeline_sub":"Live AWS job status","job":"Job ID", "pending":"Awaiting submission", "progress":"Job progress","complete":"Completed", "failed":"Failed", "in_progress":"In progress", "waiting":"Waiting", "events":"Task activity",
     "demo_info":"In local mode, progress summarizes local processing milestones. AWS mode maps known job statuses to approximate steps; the current backend does not expose precise per-stage percentages or timings.",
     "results":"Quality insights & visualizations", "results_sub":"Animated results are calculated from the processed dataset. Associations are not proof of root cause.",
     "quality":"Data quality", "downloads":"Reports & downloads", "charts":"Analytics", "stats":"Overview", "missing":"Missing values by column", "issues":"Review flags", "preview_clean":"Cleaned data preview", "source":"Analysis source", "raw":"Input rows", "clean":"Cleaned rows", "duplicate":"Duplicates removed", "defects":"Defective rows", "rate":"Defect rate", "nothing":"Run an analysis to see animated KPIs, defect comparisons and downloads.",
     "report_download":"Download report.json", "csv_download":"Download cleaned.csv", "download_sample":"Download 6-row sample", "download_6000":"Download 6,000-row dataset", "data_dictionary":"CSV data dictionary", "required":"Required", "optional":"Optional", "column":"Column", "format":"Format / example", "kind":"Requirement", "docs":"Schema & samples", "notice":"Cloud-side validation currently implements a subset of the local UI checks.",
-    "lookup":"Job status lookup", "refresh":"Refresh job status", "enter_job":"Enter job ID", "aws_missing":"AWS_API_BASE_URL or DEMO_API_KEY is missing from Streamlit Secrets.", "aws_ready":"API configuration detected; availability is not yet verified.", "aws_uploaded":"CSV uploaded to S3. Refresh status after processing.","aws_invalid_option":"Allow invalid CSV upload (test INVALID_INPUT)","aws_fetch_error":"Could not retrieve job status", "aws_upload_error":"AWS upload failed", "job_failed":"The job is FAILED; inspect the AWS logs and DLQ.","job_invalid":"AWS rejected the input schema.", "status":"Current status", "origin_local":"Local Python analysis", "origin_aws":"AWS report.json and cleaned.csv (additional breakdowns calculated by the UI)",
+    "lookup":"Job status lookup", "refresh":"Refresh job status", "enter_job":"Enter job ID", "aws_missing":"AWS_API_BASE_URL or DEMO_API_KEY is missing from Streamlit Secrets.", "aws_ready":"API configuration detected; availability is not yet verified.", "aws_uploaded":"File uploaded. Tracking AWS automatically.","aws_invalid_option":"Allow invalid CSV upload (test INVALID_INPUT)","aws_fetch_error":"Could not retrieve job status", "aws_upload_error":"AWS upload failed", "job_failed":"The job is FAILED; inspect the AWS logs and DLQ.","job_invalid":"AWS rejected the input schema.", "status":"Current status", "origin_local":"Local Python analysis", "origin_aws":"AWS report.json and cleaned.csv (additional breakdowns calculated by the UI)",
     "region":"AWS · us-east-1", "footer":"Group 4 · Manufacturing Data Quality · Deterministic analytics only; AI report is not yet integrated.", "no_valid":"No valid labeled records", "no_data":"No statistics available", "stages_done":"All seven stages completed", "stage_unknown":"Exact per-stage progress is not provided by AWS.", "file_bigger":"File exceeds the allowed size.", "file_error":"Upload a CSV with the seven required columns.",
     "machine":"Defect rate by machine", "shift":"Defect rate by shift", "product":"Defect rate by product", "supplier":"Defect rate by supplier batch", "day":"Daily defect-rate trend", "donut":"Overall defect distribution", "valid_label":"Valid labeled rows", "by_stage":"Stage", "web_warning":"Public access is enabled. Anyone who can open this site may submit cloud jobs; set usage controls before production use.",
     "types":"UTF-8 · CSV · Maximum 10 MiB", "clean_preview":"Preview of cleaned records", "warnings_none":"No quality warnings detected by local checks.",
@@ -100,12 +101,12 @@ LANG = {
     "data":"01 / 上传生产数据", "data_sub":"上传 UTF-8 CSV，或使用示例数据体验流程。", "choose":"拖拽 CSV 文件至此", "sample":"加载示例CSV", "reset":"重置", "run_local":"运行本地分析", "run_aws":"上传至AWS", "file":"数据文件", "not_selected":"未选择文件", "mode":"运行模式",
     "local":"本地演示 · 不连接AWS", "aws":"AWS云端模式", "mode_help_local":"本地模式在Streamlit服务器执行分析，不会调用AWS。", "mode_help_aws":"AWS模式使用预签名S3上传和已有的API Gateway接口。",
     "rules":"7个必需列 · 最大10 MiB · 最多50,000行（前端）", "ready":"结构校验通过", "invalid":"输入校验失败", "warnings":"质量提示", "file_preview":"CSV预览",
-    "pipeline":"02 / 数据处理流程", "pipeline_sub":"根据已有任务状态推断阶段，不代表真实阶段耗时。", "job":"任务ID", "pending":"等待提交", "progress":"阶段示意进度", "complete":"处理完成", "failed":"处理失败", "in_progress":"处理中", "waiting":"等待中", "events":"网页活动日志（非CloudWatch）",
+    "pipeline":"02 / 数据处理流程", "pipeline_sub":"AWS任务实时状态", "job":"任务ID", "pending":"等待提交", "progress":"任务进度", "complete":"处理完成", "failed":"处理失败", "in_progress":"处理中", "waiting":"等待中", "events":"任务动态",
     "demo_info":"本地模式展示本地处理阶段。AWS 模式根据可用任务状态推断大致进度；目前后端不提供每一阶段的精确百分比或耗时。",
     "results":"质量洞察与可视化", "results_sub":"根据当前数据计算指标并播放图表动画；统计相关性不代表因果关系。",
     "quality":"数据质量", "downloads":"报告与下载", "charts":"图表分析", "stats":"统计概览", "missing":"各字段缺失数量", "issues":"质量预警", "preview_clean":"清洗结果预览", "source":"分析来源", "raw":"原始记录", "clean":"清洗后记录", "duplicate":"去除重复行", "defects":"缺陷记录", "rate":"总体缺陷率", "nothing":"执行分析后，这里会展示动态指标、缺陷率对比和报告下载。",
     "report_download":"下载 report.json", "csv_download":"下载 cleaned.csv", "download_sample":"下载6行示例CSV", "download_6000":"下载6000行制造业CSV", "data_dictionary":"CSV字段字典", "required":"必需", "optional":"可选", "column":"字段", "format":"格式/示例", "kind":"属性", "docs":"数据规范与样例", "notice":"当前AWS后端校验范围比前端的本地检查少。",
-    "lookup":"任务状态查询", "refresh":"刷新任务状态", "enter_job":"输入Job ID", "aws_missing":"Streamlit Secrets缺少 AWS_API_BASE_URL 或 DEMO_API_KEY。", "aws_ready":"检测到API配置，但尚未验证实际连接。", "aws_uploaded":"CSV已上传S3，处理后刷新状态。", "aws_invalid_option":"允许上传无效结构CSV（测试INVALID_INPUT）", "aws_fetch_error":"无法读取任务状态", "aws_upload_error":"AWS上传失败", "job_failed":"任务处于FAILED状态，请查看CloudWatch和DLQ。", "job_invalid":"AWS判定输入结构无效。", "status":"当前状态", "origin_local":"本地Python分析", "origin_aws":"AWS report.json + cleaned.csv（附加分组指标由前端计算）",
+    "lookup":"任务状态查询", "refresh":"刷新任务状态", "enter_job":"输入Job ID", "aws_missing":"Streamlit Secrets缺少 AWS_API_BASE_URL 或 DEMO_API_KEY。", "aws_ready":"检测到API配置，但尚未验证实际连接。", "aws_uploaded":"上传成功，正在自动跟踪AWS任务。", "aws_invalid_option":"允许上传无效结构CSV（测试INVALID_INPUT）", "aws_fetch_error":"无法读取任务状态", "aws_upload_error":"AWS上传失败", "job_failed":"任务处于FAILED状态，请查看CloudWatch和DLQ。", "job_invalid":"AWS判定输入结构无效。", "status":"当前状态", "origin_local":"本地Python分析", "origin_aws":"AWS report.json + cleaned.csv（附加分组指标由前端计算）",
     "region":"AWS · us-east-1", "footer":"Group 4 · 制造业数据质量 · 使用确定性分析；尚未接入AI报告。", "no_valid":"没有有效缺陷标签", "no_data":"暂无统计数据", "stages_done":"7个阶段已完成", "stage_unknown":"AWS尚不提供每个阶段的精确进度。", "file_bigger":"文件超过大小限制。", "file_error":"请上传包含7个必需字段的CSV。",
     "machine":"按机器缺陷率", "shift":"按班次缺陷率", "product":"按产品缺陷率", "supplier":"按供应商批次缺陷率", "day":"每日缺陷率趋势", "donut":"总体质量分布", "valid_label":"有效标签记录", "by_stage":"阶段", "web_warning":"当前网站允许公开访问。其他访客可能通过网页发起AWS任务；正式部署前应增加访问控制或限流。",
     "types":"UTF-8 · CSV · 最大10 MiB", "clean_preview":"清洗记录预览", "warnings_none":"本地检查未发现质量预警。",
@@ -191,7 +192,7 @@ def _status_milestone(is_aws: bool, has_file: bool, valid: bool, has_result: boo
         if has_file and not valid:
             return 2, 28, "INVALID_INPUT"
         return (1, 14, "FILE_READY") if has_file else (0, 0, "WAITING")
-    table = {"AWAITING_EVENT":(1,14), "CREATED":(1,14), "UPLOADED":(1,14),
+    table = {"AWAITING_EVENT":(2,25), "CREATED":(2,25), "UPLOADED":(2,25),
              "VALIDATING":(2,27), "VALIDATED":(3,41), "QUEUED":(4,56),
              "PROCESSING":(5,73), "COMPLETED":(7,100), "COMPLETED_WITH_WARNING":(7,100),
              "INVALID_INPUT":(2,27), "FAILED":(5,73), "AWS_UPLOAD_FAILED":(1,0)}
@@ -249,7 +250,7 @@ def _load_result_from_aws(job_id:str,result:dict):
         derived,_=analyze_file(clean_bytes, f"{job_id}.csv")
         for name in ("by_shift","by_product","by_supplier_batch","by_day","quality_flags"):
             report.setdefault(name,derived.get(name,{}))
-    st.session_state["result"]=(report, cleaned, "aws")
+    st.session_state["result_aws"]=(report, cleaned, "aws")
 
 
 # The HTML/SVG analytics lives in an isolated Streamlit component. All data is
@@ -297,7 +298,16 @@ def _render_analytics(report:dict):
 
 # -- UI --
 if "ui_lang" not in st.session_state:
-    st.session_state["ui_lang"]="en"  # Required default language
+    st.session_state["ui_lang"] = "en"
+# Restore the non-secret job ID from the URL on a full browser refresh.
+url_job = str(st.query_params.get("job", "")).lower()
+if re.fullmatch(r"[0-9a-f]{16}", url_job) and not st.session_state.get("aws_job_id"):
+    st.session_state["aws_job_id"] = url_job
+    st.session_state["aws_polling"] = True
+if "execution_mode" not in st.session_state:
+    st.session_state["execution_mode"] = "aws" if (st.session_state.get("aws_job_id") or (_cfg("AWS_API_BASE_URL") and _cfg("DEMO_API_KEY"))) else "local"
+if "job_id_input" not in st.session_state:
+    st.session_state["job_id_input"] = st.session_state.get("aws_job_id", "")
 st.markdown(CSS,unsafe_allow_html=True)
 head,choice=st.columns([5,1],vertical_alignment="center")
 with head:
@@ -307,33 +317,26 @@ with choice:
 
 st.markdown(f'<section class="mq-hero"><div class="mq-eyebrow">EVENT-DRIVEN DATA QUALITY PLATFORM</div><h1>{html.escape(label("hero"))}<br><span style="color:#3185d5">{html.escape(label("hero2"))}</span></h1><p>{html.escape(label("subtitle"))}</p></section>',unsafe_allow_html=True)
 
-mode=st.radio(label("mode"),options=["local","aws"],format_func=lambda x:label(x),horizontal=True,key="execution_mode",label_visibility="collapsed")
+mode=st.radio("Execution mode",options=["local","aws"],format_func=lambda x:label(x),horizontal=True,key="execution_mode",label_visibility="collapsed")
 is_aws=mode=="aws"
-if st.session_state.get("_last_mode")!=mode:
-    st.session_state["_last_mode"]=mode
-    for k in ("result","aws_status","aws_job_id","_active_file","aws_upload_error"):
-        st.session_state.pop(k,None)
-    st.session_state["ui_events"]=[]
-st.caption(label("mode_help_aws" if is_aws else "mode_help_local"))
+# Language and mode switches must never erase a cloud task.
+
 if is_aws:
-    if _cfg("AWS_API_BASE_URL") and _cfg("DEMO_API_KEY"):
-        st.success(label("aws_ready"),icon="✅")
-    else:
+    if not (_cfg("AWS_API_BASE_URL") and _cfg("DEMO_API_KEY")):
         st.warning(label("aws_missing"))
-    st.caption(label("web_warning"))
 
 left,right=st.columns([0.94,1.06],gap="large",vertical_alignment="top")
 with left:
     with st.container(border=True):
         st.markdown(f'<div class="mq-p-head"><h3>{html.escape(label("data"))}</h3><p>{html.escape(label("data_sub"))}</p></div>',unsafe_allow_html=True)
         if "upload_widget_seq" not in st.session_state:st.session_state["upload_widget_seq"]=0
-        upload=st.file_uploader(label("choose"),type=["csv"],key=f"csv_upload_{st.session_state.upload_widget_seq}")
+        upload=st.file_uploader("CSV dataset",type=["csv"],key=f"csv_upload_{st.session_state.upload_widget_seq}")
         bc,br=st.columns([1,1])
         with bc:
             if st.button(label("sample"),use_container_width=True):
                 st.session_state["use_sample"]=True
                 st.session_state["upload_widget_seq"]+=1
-                st.session_state.pop("result",None)
+                st.session_state.pop("result_local",None)
                 _event("Sample CSV selected" if st.session_state.ui_lang=="en" else "已选择示例CSV")
                 st.rerun()
         with br:
@@ -355,11 +358,10 @@ with left:
         if has_file:
             check=validate_file(raw,file_name)
             valid=not bool(check["errors"])
-            fingerprint=f"{mode}:{file_name}:{check['job_id']}"
+            fingerprint=f"{file_name}:{check['job_id']}"
             if st.session_state.get("_last_fingerprint") != fingerprint:
                 st.session_state["_last_fingerprint"]=fingerprint
-                for k in ("result","aws_status","aws_job_id","aws_upload_error"):
-                    st.session_state.pop(k,None)
+                st.session_state.pop("result_local", None)
             st.caption(f'📄 {file_name} · {len(raw):,} bytes · {label("job")}: `{check["job_id"]}`')
             if valid:
                 st.success(f'{label("ready")} · {check["rows"]:,} rows',icon="✅")
@@ -374,10 +376,10 @@ with left:
         else:
             st.caption(label("not_selected"))
         st.markdown(f'<div class="mq-inline-meta"><span>{html.escape(label("types"))}</span><span>SHA-256 · v1</span></div>',unsafe_allow_html=True)
-        allow_invalid=False
-        if is_aws:
-            allow_invalid=st.checkbox(label("aws_invalid_option"),value=False)
-        active=has_file and (valid or (is_aws and allow_invalid))
+        # The AWS Validation Lambda remains authoritative, including INVALID_INPUT.
+        if is_aws and has_file and not valid:
+            st.info("AWS will validate the submitted file." if st.session_state.ui_lang=="en" else "文件提交后将由AWS进行最终校验。")
+        active=has_file and len(raw or b"")<=MAX_BYTES and (is_aws or valid)
         if st.button(label("run_aws" if is_aws else "run_local"),type="primary",disabled=not active,use_container_width=True):
             if is_aws:
                 for k in ("aws_upload_error","aws_status","aws_job_id"):
@@ -388,7 +390,7 @@ with left:
                     st.session_state["aws_job_id"]=info["job_id"]
                     st.session_state["job_id_input"]=info["job_id"]
                     st.session_state.pop("aws_status",None)
-                    st.session_state.pop("result",None)
+                    st.session_state.pop("result_local",None)
                     _event(f'S3 raw/ upload accepted · {info["job_id"]}')
                     st.success(label("aws_uploaded"))
                 except CloudAPIError as e:
@@ -406,17 +408,17 @@ with left:
                 try:
                     with st.spinner(label("in_progress")):
                         report,cleaned=analyze_file(raw,file_name)
-                    st.session_state["result"]=(report,cleaned,"local")
+                    st.session_state["result_local"]=(report,cleaned,"local")
                     _event(f'Local validation, cleaning and analysis completed · {report["job_id"]}')
                     st.success(label("complete"))
                 except Exception as e:
                     st.error(str(e))
-        st.markdown(f'<div class="mq-disclaimer">ⓘ {html.escape(label("demo_info"))}</div>',unsafe_allow_html=True)
+
 
     if is_aws:
         with st.container(border=True):
             st.markdown(f'**{label("lookup")}**')
-            typed=st.text_input(label("enter_job"),value=st.session_state.get("aws_job_id", ""),max_chars=64,key="job_id_input")
+            typed=st.text_input("Job ID",max_chars=64,key="job_id_input")
             if st.button(label("refresh"),disabled=not typed.strip(),use_container_width=True):
                 try:
                     with st.spinner(label("in_progress")):
@@ -435,7 +437,7 @@ with left:
 with right:
     with st.container(border=True):
         st.markdown(f'<div class="mq-p-head"><h3>{html.escape(label("pipeline"))}</h3><p>{html.escape(label("pipeline_sub"))}</p></div>',unsafe_allow_html=True)
-        result=st.session_state.get("result")
+        result=st.session_state.get("result_aws" if is_aws else "result_local")
         aws_status=st.session_state.get("aws_status",{}).get("status", "")
         failure=st.session_state.get("aws_upload_error") if is_aws else None
         if failure:
@@ -451,7 +453,7 @@ with right:
             st.markdown(f'<div class="mq-log">{html.escape(label("pending"))}</div>',unsafe_allow_html=True)
 
 st.markdown(f'<div class="mq-section-title">{html.escape(label("results"))}</div><div style="color:#7b94aa;font-size:12px;margin-bottom:13px">{html.escape(label("results_sub"))}</div>',unsafe_allow_html=True)
-result=st.session_state.get("result")
+result=st.session_state.get("result_aws" if is_aws else "result_local")
 if result:
     report,cleaned,origin=result
     st.caption(f'{label("source")}: {label("origin_aws" if origin=="aws" else "origin_local")}')
@@ -502,5 +504,5 @@ with st.expander(label("docs")):
         st.download_button(label("download_sample"),(p/"sample_valid.csv").read_bytes(),file_name="sample_valid.csv",mime="text/csv",use_container_width=True)
     with b:
         st.download_button(label("download_6000"),(p/"manufacturing_6000.csv").read_bytes(),file_name="manufacturing_6000.csv",mime="text/csv",use_container_width=True)
-    st.caption(label("notice"))
+
 st.markdown(f'<div class="mq-footer">{html.escape(label("footer"))}</div>',unsafe_allow_html=True)
