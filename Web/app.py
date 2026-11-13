@@ -382,17 +382,33 @@ with left:
         active=has_file and len(raw or b"")<=MAX_BYTES and (is_aws or valid)
         if st.button(label("run_aws" if is_aws else "run_local"),type="primary",disabled=not active,use_container_width=True):
             if is_aws:
-                for k in ("aws_upload_error","aws_status","aws_job_id"):
-                    st.session_state.pop(k,None)
+                st.session_state.pop("aws_upload_error",None)
                 try:
                     with st.spinner(label("in_progress")):
                         info=_api().upload(file_name,raw)
-                    st.session_state["aws_job_id"]=info["job_id"]
-                    st.session_state["job_id_input"]=info["job_id"]
-                    st.session_state.pop("aws_status",None)
-                    st.session_state.pop("result_local",None)
-                    _event(f'S3 raw/ upload accepted · {info["job_id"]}')
-                    st.success(label("aws_uploaded"))
+                    job_id=info["job_id"]
+                    st.session_state["aws_job_id"]=job_id
+                    st.session_state["job_id_input"]=job_id
+                    st.query_params["job"]=job_id
+                    st.session_state.pop("result_aws",None)
+                    st.session_state.pop("aws_result_error",None)
+                    if info.get("duplicate"):
+                        existing=info.get("existing",{})
+                        st.session_state["aws_status"]=existing
+                        previous=existing.get("status","UNKNOWN")
+                        st.session_state["aws_polling"]=previous not in {"COMPLETED","COMPLETED_WITH_WARNING","INVALID_INPUT","FAILED"}
+                        if previous in {"COMPLETED","COMPLETED_WITH_WARNING"}:
+                            try:
+                                _load_result_from_aws(job_id,existing)
+                            except CloudAPIError as exc:
+                                st.session_state["aws_result_error"]=str(exc)
+                        st.warning(("Duplicate file detected; using existing AWS job ("+previous+").") if st.session_state.ui_lang=="en" else ("发现相同内容，直接复用AWS已有任务（"+previous+"）。"))
+                        _event(f'Existing SHA-256 job reused · {job_id} · {previous}')
+                    else:
+                        st.session_state["aws_status"]={"job_id":job_id,"status":"AWAITING_EVENT"}
+                        st.session_state["aws_polling"]=True
+                        _event(f'S3 raw/ upload accepted · {job_id}')
+                        st.success(label("aws_uploaded"))
                 except CloudAPIError as e:
                     st.session_state["aws_upload_error"]={"stage":e.stage,"status":e.status_code,"code":e.code,"request_id":e.request_id,"reason":e.reason}
                     st.error(f"{label('aws_upload_error')}: {e}")
@@ -419,22 +435,62 @@ with left:
         with st.container(border=True):
             st.markdown(f'**{label("lookup")}**')
             typed=st.text_input("Job ID",max_chars=64,key="job_id_input")
-            if st.button(label("refresh"),disabled=not typed.strip(),use_container_width=True):
+            if st.button(label("refresh"),disabled=not bool(re.fullmatch(r"[0-9a-fA-F]{16}",typed.strip())),use_container_width=True):
                 try:
+                    job_id=typed.strip().lower()
                     with st.spinner(label("in_progress")):
-                        reply=_api().status(typed.strip())
-                        st.session_state["aws_status"]=reply
-                        st.session_state["aws_job_id"]=typed.strip()
-                        _event(f'GET /jobs/{typed.strip()} · {reply.get("status", "UNKNOWN")}')
-                        _load_result_from_aws(typed.strip(),reply)
-                    st.success(f'{label("status")}: {label("status_"+reply.get("status",""))}')
-                except Exception as e:
+                        reply=_api().status(job_id)
+                    previous=st.session_state.get("aws_status",{}).get("status")
+                    st.session_state["aws_status"]=reply
+                    st.session_state["aws_job_id"]=job_id
+                    st.query_params["job"]=job_id
+                    state=reply.get("status","UNKNOWN")
+                    st.session_state["aws_polling"]=state not in {"COMPLETED","COMPLETED_WITH_WARNING","INVALID_INPUT","FAILED"}
+                    st.session_state.pop("aws_upload_error",None)
+                    if state!=previous:
+                        _event(f'GET /jobs/{job_id} · {state}')
+                    if state in {"COMPLETED","COMPLETED_WITH_WARNING"}:
+                        _load_result_from_aws(job_id,reply)
+                    st.success(f'{label("status")}: {label("status_"+state)}')
+                except CloudAPIError as e:
                     st.error(f'{label("aws_fetch_error")}: {e}')
+                except Exception:
+                    st.error(label("aws_fetch_error"))
             aws_state=st.session_state.get("aws_status",{}).get("status")
-            if aws_state=="FAILED":st.error(label("job_failed"))
-            elif aws_state=="INVALID_INPUT":st.warning(label("job_invalid"))
+            if aws_state=="FAILED":
+                st.error(label("job_failed"))
+            elif aws_state=="INVALID_INPUT":
+                errs=st.session_state.get("aws_status",{}).get("validation_errors",[])
+                st.error(label("job_invalid") + (" · "+", ".join(map(str,errs[:6])) if isinstance(errs,list) and errs else ""))
 
-with right:
+@st.fragment(run_every="4s")
+def live_job_panel():
+    """Only poll actual AWS job status; no simulated timers or fabricated events."""
+    if is_aws and st.session_state.get("aws_polling") and st.session_state.get("aws_job_id"):
+        job_id=st.session_state["aws_job_id"]
+        try:
+            reply=_api().status(job_id)
+            status=reply.get("status","UNKNOWN")
+            previous=st.session_state.get("aws_status",{}).get("status")
+            st.session_state["aws_status"]=reply
+            if status!=previous:
+                _event(f'GET /jobs/{job_id} · {status}')
+            st.session_state.pop("aws_poll_error",None)
+            if status in {"COMPLETED","COMPLETED_WITH_WARNING","INVALID_INPUT","FAILED"}:
+                st.session_state["aws_polling"]=False
+                if status in {"COMPLETED","COMPLETED_WITH_WARNING"}:
+                    try:
+                        _load_result_from_aws(job_id,reply)
+                        st.session_state.pop("aws_result_error",None)
+                    except CloudAPIError as exc:
+                        st.session_state["aws_result_error"]=str(exc)
+                    except Exception:
+                        st.session_state["aws_result_error"]="Report could not be loaded"
+                st.rerun()
+        except CloudAPIError as exc:
+            st.session_state["aws_poll_error"]=str(exc)
+            st.session_state["aws_polling"]=False
+            _event(f'Job status request failed · {exc.code}')
     with st.container(border=True):
         st.markdown(f'<div class="mq-p-head"><h3>{html.escape(label("pipeline"))}</h3><p>{html.escape(label("pipeline_sub"))}</p></div>',unsafe_allow_html=True)
         result=st.session_state.get("result_aws" if is_aws else "result_local")
@@ -442,15 +498,28 @@ with right:
         failure=st.session_state.get("aws_upload_error") if is_aws else None
         if failure:
             aws_status="AWS_UPLOAD_FAILED"
-            st.error(f"{'S3 upload failed' if st.session_state.ui_lang=='en' else 'S3上传失败'} · HTTP {failure['status'] or 'N/A'} · {failure['code']}")
+            st.error(f"{'Upload failed' if st.session_state.ui_lang=='en' else '上传失败'} · HTTP {failure['status'] or 'N/A'} · {failure['code']}")
         job=st.session_state.get("aws_job_id", "") if is_aws else (check["job_id"] if check else "")
         st.markdown(_pipeline(is_aws,has_file,valid,bool(result),aws_status,job),unsafe_allow_html=True)
+        status_txt=st.session_state.get("aws_status",{}).get("status","")
+        if is_aws and status_txt=="INVALID_INPUT":
+            errs=st.session_state.get("aws_status",{}).get("validation_errors",[])
+            st.error(("AWS validation rejected the CSV" if st.session_state.ui_lang=="en" else "AWS验证拒绝了CSV") + (": "+", ".join(map(str,errs[:6])) if isinstance(errs,list) and errs else ""))
+        if is_aws and status_txt=="FAILED":
+            st.error(label("job_failed"))
+        if is_aws and st.session_state.get("aws_result_error"):
+            st.warning(st.session_state["aws_result_error"])
+        if is_aws and st.session_state.get("aws_poll_error"):
+            st.warning(st.session_state["aws_poll_error"])
         st.markdown(f'<div style="margin-top:13px;font-size:11px;color:#547998;font-weight:750">⌘ {html.escape(label("events"))}</div>',unsafe_allow_html=True)
         events=st.session_state.get("ui_events",[])
         if events:
             st.markdown('<div class="mq-log">'+''.join(f'<div>{html.escape(x)}</div>' for x in events)+'</div>',unsafe_allow_html=True)
         else:
             st.markdown(f'<div class="mq-log">{html.escape(label("pending"))}</div>',unsafe_allow_html=True)
+
+with right:
+    live_job_panel()
 
 st.markdown(f'<div class="mq-section-title">{html.escape(label("results"))}</div><div style="color:#7b94aa;font-size:12px;margin-bottom:13px">{html.escape(label("results_sub"))}</div>',unsafe_allow_html=True)
 result=st.session_state.get("result_aws" if is_aws else "result_local")
