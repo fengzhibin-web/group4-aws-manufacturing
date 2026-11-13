@@ -1,7 +1,7 @@
 name: Streamlit regression checks
 on:
   push:
-    branches: [main, fix/streamlit-workflow-v4-2]
+    branches: [main, fix/streamlit-workflow-v4-2, fix/v43-language-persistent-notice]
   pull_request:
 jobs:
   smoke:
