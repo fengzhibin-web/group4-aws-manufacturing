@@ -36,6 +36,9 @@ CSS = r"""
 :root{--mq-blue:#287dda;--mq-green:#18a786;--mq-navy:#183c65;--mq-muted:#7189a2;--mq-border:#dbe8f6}
 .stApp {background:radial-gradient(circle at 12% 0%,#e7f3ff 0,transparent 37%),linear-gradient(180deg,#f6fbff,#f4f8fd 65%,#f8fbff)!important;color:#1b3752!important}
 section[data-testid="stSidebar"]{display:none!important}
+header[data-testid="stHeader"]{background:rgba(246,250,254,.96)!important;box-shadow:none!important;border-bottom:0!important}
+[data-testid="stToolbar"]{background:transparent!important}
+[data-testid="stDecoration"]{display:none!important}
 .block-container{max-width:1420px!important;padding:1.35rem 2.2rem 4rem!important}
 #MainMenu,footer[data-testid="stFooter"]{visibility:hidden}
 .mq-brand{display:flex;align-items:center;gap:13px;padding:4px 0 17px;border-bottom:1px solid #e1eaf5}
@@ -183,6 +186,18 @@ def _event(message: str):
     st.session_state.setdefault("ui_events", []).append(f"{utc} · {message}")
     st.session_state["ui_events"] = st.session_state["ui_events"][-14:]
 
+def _localized_event(event: str) -> str:
+    zh=st.session_state.get("ui_lang")=="zh"
+    if any(x in event for x in ("SAMPLE_SELECTED","Sample CSV selected","已选择示例CSV")):
+        return event.split(" · ")[0]+" · "+("已选择示例CSV" if zh else "Sample CSV selected")
+    if "Existing SHA-256 job reused" in event:
+        return event.replace("Existing SHA-256 job reused","复用已有SHA-256任务" if zh else "Existing SHA-256 job reused")
+    if "S3 raw/ upload accepted" in event:
+        return event.replace("S3 raw/ upload accepted","S3上传成功" if zh else "S3 raw/ upload accepted")
+    if "Local validation, cleaning and analysis completed" in event:
+        return event.replace("Local validation, cleaning and analysis completed","本地校验、清洗与分析已完成" if zh else "Local validation, cleaning and analysis completed")
+    return event
+
 
 def _status_milestone(is_aws: bool, has_file: bool, valid: bool, has_result: bool, code: str):
     """Coarse UI milestones only. Not measured stage progress or latency."""
@@ -317,7 +332,13 @@ with choice:
 
 st.markdown(f'<section class="mq-hero"><div class="mq-eyebrow">EVENT-DRIVEN DATA QUALITY PLATFORM</div><h1>{html.escape(label("hero"))}<br><span style="color:#3185d5">{html.escape(label("hero2"))}</span></h1><p>{html.escape(label("subtitle"))}</p></section>',unsafe_allow_html=True)
 
-mode=st.radio("Execution mode",options=["local","aws"],format_func=lambda x:("AWS Cloud / AWS云端" if x=="aws" else "Local Demo / 本地演示"),horizontal=True,key="execution_mode",label_visibility="collapsed")
+mode=st.radio(
+    label("mode"), options=["local","aws"],
+    index=["local","aws"].index(st.session_state.get("execution_mode","local")),
+    format_func=lambda x:label(x), horizontal=True,
+    key=f"mode_selector_{st.session_state.ui_lang}", label_visibility="collapsed",
+)
+st.session_state["execution_mode"]=mode
 is_aws=mode=="aws"
 # Language and mode switches must never erase a cloud task.
 
@@ -337,13 +358,13 @@ with left:
                 st.session_state["use_sample"]=True
                 st.session_state["upload_widget_seq"]+=1
                 st.session_state.pop("result_local",None)
-                _event("Sample CSV selected" if st.session_state.ui_lang=="en" else "已选择示例CSV")
+                _event("SAMPLE_SELECTED")
                 st.rerun()
         with br:
             if st.button(label("reset"),use_container_width=True):
                 st.session_state["use_sample"]=False
                 st.session_state["upload_widget_seq"]+=1
-                for k in ("result_local","result_aws","aws_status","aws_job_id","aws_upload_error","aws_polling","aws_poll_error","aws_result_error","_last_fingerprint"):
+                for k in ("result_local","result_aws","aws_status","aws_job_id","aws_upload_error","aws_polling","aws_poll_error","aws_result_error","_last_fingerprint","aws_notice"):
                     st.session_state.pop(k,None)
                 st.session_state["job_id_input"]=""
                 if "job" in st.query_params:
@@ -365,6 +386,7 @@ with left:
             if st.session_state.get("_last_fingerprint") != fingerprint:
                 st.session_state["_last_fingerprint"]=fingerprint
                 st.session_state.pop("result_local", None)
+                st.session_state.pop("aws_notice",None)
             st.caption(f'📄 {file_name} · {len(raw):,} bytes · {label("job")}: `{check["job_id"]}`')
             if valid:
                 st.success(f'{label("ready")} · {check["rows"]:,} rows',icon="✅")
@@ -388,6 +410,7 @@ with left:
         if st.button(label("run_aws" if is_aws else "run_local"),type="primary",disabled=not active,use_container_width=True):
             if is_aws:
                 st.session_state.pop("aws_upload_error",None)
+                st.session_state.pop("aws_notice",None)
                 try:
                     with st.spinner(label("in_progress")):
                         info=_api().upload(file_name,raw)
@@ -407,7 +430,7 @@ with left:
                                 _load_result_from_aws(job_id,existing)
                             except CloudAPIError as exc:
                                 st.session_state["aws_result_error"]=str(exc)
-                        st.warning(("Duplicate file detected; using existing AWS job ("+previous+").") if st.session_state.ui_lang=="en" else ("发现相同内容，直接复用AWS已有任务（"+previous+"）。"))
+                        st.session_state["aws_notice"]={"type":"duplicate","job_id":job_id,"status":previous}
                         _event(f'Existing SHA-256 job reused · {job_id} · {previous}')
                     else:
                         st.session_state["aws_status"]={"job_id":job_id,"status":"AWAITING_EVENT"}
@@ -436,6 +459,15 @@ with left:
                 except Exception as e:
                     st.error(str(e))
 
+
+
+        notice=st.session_state.get("aws_notice") if is_aws else None
+        if notice and notice.get("type")=="duplicate" and notice.get("job_id")==st.session_state.get("aws_job_id"):
+            previous=notice.get("status","UNKNOWN")
+            if st.session_state.ui_lang=="en":
+                st.warning(f"Duplicate content detected. Reusing AWS job ({previous}); no reprocessing.")
+            else:
+                st.warning(f"检测到相同内容，已复用AWS任务（{previous}），不会重复处理。")
 
     if is_aws:
         with st.container(border=True):
@@ -527,7 +559,7 @@ def live_job_panel():
         st.markdown(f'<div style="margin-top:13px;font-size:11px;color:#547998;font-weight:750">⌘ {html.escape(label("events"))}</div>',unsafe_allow_html=True)
         events=st.session_state.get("ui_events",[])
         if events:
-            st.markdown('<div class="mq-log">'+''.join(f'<div>{html.escape(x)}</div>' for x in events)+'</div>',unsafe_allow_html=True)
+            st.markdown('<div class="mq-log">'+''.join(f'<div>{html.escape(_localized_event(x))}</div>' for x in events)+'</div>',unsafe_allow_html=True)
         else:
             st.markdown(f'<div class="mq-log">{html.escape(label("pending"))}</div>',unsafe_allow_html=True)
 
