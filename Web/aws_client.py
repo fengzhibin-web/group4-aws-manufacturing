@@ -99,6 +99,18 @@ class CloudAPI:
             "size_bytes": len(data),
             "processing_version": VERSION,
         }
+        # Exact bytes + v1 identify the job. Query DynamoDB through the existing
+        # API before requesting a new S3 upload URL. The AWS validation Lambda
+        # still independently checks the contents on first submission.
+        job_id = stable_job_id(data)
+        existing = self.status(job_id)
+        if existing.get("status") != "AWAITING_EVENT":
+            return {
+                "job_id": job_id,
+                "duplicate": True,
+                "existing": existing,
+                "existing_status": existing.get("status", "UNKNOWN"),
+            }
         response = _safe_request("POST", f"{self.base_url}/uploads", "API_UPLOAD_URL",
                                  json=payload, headers=self.headers, timeout=20)
         info = self._json(response, "API_UPLOAD_URL")
