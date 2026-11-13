@@ -54,7 +54,7 @@ def test_aws_status_is_polled_without_clicking_refresh(monkeypatch):
 
 def test_duplicate_notice_survives_language_changes():
     at = AppTest.from_file(APP, default_timeout=30).run()
-    at.session_state["execution_mode"] = "aws"
+    at.radio[1].set_value("aws").run()
     at.session_state["aws_job_id"] = "0123456789abcdef"
     at.session_state["aws_notice"] = {
         "type": "duplicate",
