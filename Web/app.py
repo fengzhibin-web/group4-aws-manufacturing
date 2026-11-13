@@ -335,7 +335,7 @@ st.markdown(f'<section class="mq-hero"><div class="mq-eyebrow">EVENT-DRIVEN DATA
 mode=st.radio(
     label("mode"), options=["local","aws"],
     index=["local","aws"].index(st.session_state.get("execution_mode","local")),
-    format_func=lambda x:label(x), horizontal=True,
+    format_func=lambda x, ui_lang=st.session_state.ui_lang:LANG[ui_lang].get(x,x), horizontal=True,
     key=f"mode_selector_{st.session_state.ui_lang}", label_visibility="collapsed",
 )
 st.session_state["execution_mode"]=mode
