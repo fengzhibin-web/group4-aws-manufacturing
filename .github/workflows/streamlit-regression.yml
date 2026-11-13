@@ -18,7 +18,7 @@ jobs:
       - name: Compile all source files
         run: python -m compileall -q Web
       - name: Run original and new workflow regression checks
-        run: python -m pytest -q Web/test/test_core.py Web/test/test_workflow_v42.py
+        run: python -m pytest -q Web/test/test_core.py Web/test/test_workflow_v42.py Web/test/test_ui_session.py
       - name: Start Streamlit app and check HTTP health
         shell: bash
         run: |
