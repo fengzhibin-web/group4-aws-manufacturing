@@ -1,0 +1,36 @@
+name: Streamlit regression checks
+on:
+  push:
+    branches: [main, fix/streamlit-workflow-v4-2]
+  pull_request:
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: Web/requirements.txt
+      - name: Install dependencies
+        run: python -m pip install -r Web/requirements.txt pytest
+      - name: Compile all source files
+        run: python -m compileall -q Web
+      - name: Run original and new workflow regression checks
+        run: python -m pytest -q Web/test/test_core.py Web/test/test_workflow_v42.py
+      - name: Start Streamlit app and check HTTP health
+        shell: bash
+        run: |
+          python -m streamlit run Web/app.py --server.headless true --server.port 8501 > /tmp/streamlit.log 2>&1 &
+          APP_PID=$!
+          for attempt in {1..20}; do
+            if curl -fsS http://127.0.0.1:8501/_stcore/health; then
+              kill $APP_PID
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/streamlit.log
+          kill $APP_PID || true
+          exit 1
