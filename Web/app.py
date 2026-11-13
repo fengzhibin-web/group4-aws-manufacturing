@@ -138,7 +138,7 @@ LOCAL_STAGES = {
 ("File loaded locally", "Read CSV on the Streamlit server; no S3 upload"),
 ("Local schema validation", "UTF-8 and required columns checked locally"),
 ("SHA-256 job fingerprint", "Same bytes map to the same v1 ID"),
-("Queue stage (simulated)", "No SQS message is sent in local mode"),
+("Local preparation", "Prepare validated records for local processing"),
 ("Local Python cleaning", "Trim whitespace and remove exact duplicates"),
 ("Local quality analytics", "Compute deterministic defect rates"),
 ("Local report ready", "Downloads generated on the Streamlit server"),
@@ -147,7 +147,7 @@ LOCAL_STAGES = {
 ("本地文件已读取", "Streamlit服务器读取文件，不上传S3"),
 ("本地结构校验", "在前端服务中检查UTF-8和7项必需列"),
 ("SHA-256任务指纹", "相同字节得到相同v1 Job ID"),
-("队列阶段（模拟）", "本地模式不会向SQS发送消息"),
+("本地预处理准备", "将校验后的记录准备进行本地清洗"),
 ("本地Python数据清洗", "去空格、去完全重复行"),
 ("本地质量分析", "计算确定性缺陷率指标"),
 ("本地报告已生成", "下载文件由Streamlit服务器生成"),
@@ -198,7 +198,7 @@ def _status_milestone(is_aws: bool, has_file: bool, valid: bool, has_result: boo
              "INVALID_INPUT":(2,27), "FAILED":(5,73), "AWS_UPLOAD_FAILED":(1,0)}
     if code in table:
         count,pct=table[code];return count,pct,code
-    return (1,14,"FILE_READY") if has_file else (0,0,"WAITING")
+    return (0,0,"WAITING") if is_aws else ((1,14,"FILE_READY") if has_file else (0,0,"WAITING"))
 
 
 def _pipeline(is_aws:bool, has_file:bool, valid:bool, has_result:bool, code:str, job_id:str):
@@ -211,7 +211,7 @@ def _pipeline(is_aws:bool, has_file:bool, valid:bool, has_result:bool, code:str,
         if state == "AWS_UPLOAD_FAILED" and i == 0:
             dot_class="error";mark="!"
         elif state in {"FAILED","INVALID_INPUT"} and i==count-1:
-            dot_class="active";mark="!"
+            dot_class="error";mark="!"
         elif i<count and state in {"COMPLETED","COMPLETED_WITH_WARNING"}:
             dot_class="done";mark="✓"
         elif i<count-1:
@@ -343,8 +343,11 @@ with left:
             if st.button(label("reset"),use_container_width=True):
                 st.session_state["use_sample"]=False
                 st.session_state["upload_widget_seq"]+=1
-                for k in ("result","aws_status","aws_job_id","_active_file","aws_upload_error"):
+                for k in ("result_local","result_aws","aws_status","aws_job_id","aws_upload_error","aws_polling","aws_poll_error","aws_result_error","_last_fingerprint"):
                     st.session_state.pop(k,None)
+                st.session_state["job_id_input"]=""
+                if "job" in st.query_params:
+                    del st.query_params["job"]
                 st.session_state["ui_events"]=[]
                 st.rerun()
         file_name=None;raw=None
@@ -366,7 +369,8 @@ with left:
             if valid:
                 st.success(f'{label("ready")} · {check["rows"]:,} rows',icon="✅")
             else:
-                for err in _translate_warnings(check["errors"]):st.error(err)
+                for err in _translate_warnings(check["errors"]):
+                    (st.warning if is_aws else st.error)(err)
             with st.expander(label("file_preview"),expanded=False):
                 if check["frame"] is not None:
                     st.dataframe(check["frame"].head(15),hide_index=True,use_container_width=True)
@@ -379,7 +383,8 @@ with left:
         # The AWS Validation Lambda remains authoritative, including INVALID_INPUT.
         if is_aws and has_file and not valid:
             st.info("AWS will validate the submitted file." if st.session_state.ui_lang=="en" else "文件提交后将由AWS进行最终校验。")
-        active=has_file and len(raw or b"")<=MAX_BYTES and (is_aws or valid)
+        over_row_limit=has_file and any("50,000" in str(err) and "超过" in str(err) for err in (check["errors"] if check else []))
+        active=has_file and 0<len(raw or b"")<=MAX_BYTES and not over_row_limit and (is_aws or valid)
         if st.button(label("run_aws" if is_aws else "run_local"),type="primary",disabled=not active,use_container_width=True):
             if is_aws:
                 st.session_state.pop("aws_upload_error",None)
@@ -407,6 +412,7 @@ with left:
                     else:
                         st.session_state["aws_status"]={"job_id":job_id,"status":"AWAITING_EVENT"}
                         st.session_state["aws_polling"]=True
+                        st.session_state["aws_poll_started"]=datetime.now(timezone.utc).timestamp()
                         _event(f'S3 raw/ upload accepted · {job_id}')
                         st.success(label("aws_uploaded"))
                 except CloudAPIError as e:
@@ -446,6 +452,7 @@ with left:
                     st.query_params["job"]=job_id
                     state=reply.get("status","UNKNOWN")
                     st.session_state["aws_polling"]=state not in {"COMPLETED","COMPLETED_WITH_WARNING","INVALID_INPUT","FAILED"}
+                    st.session_state["aws_poll_started"]=datetime.now(timezone.utc).timestamp()
                     st.session_state.pop("aws_upload_error",None)
                     if state!=previous:
                         _event(f'GET /jobs/{job_id} · {state}')
@@ -469,6 +476,12 @@ def live_job_panel():
     if is_aws and st.session_state.get("aws_polling") and st.session_state.get("aws_job_id"):
         job_id=st.session_state["aws_job_id"]
         try:
+            started=st.session_state.get("aws_poll_started")
+            if started and datetime.now(timezone.utc).timestamp()-started>240:
+                st.session_state["aws_polling"]=False
+                st.session_state["aws_poll_error"]=("The job did not complete within four minutes. Check S3 event notification, Lambda, SQS, and DynamoDB." if st.session_state.ui_lang=="en" else "超过4分钟仍未完成，请检查S3事件通知、Lambda、SQS和DynamoDB。")
+                _event("Job status · TIMEOUT")
+                st.rerun()
             reply=_api().status(job_id)
             status=reply.get("status","UNKNOWN")
             previous=st.session_state.get("aws_status",{}).get("status")
