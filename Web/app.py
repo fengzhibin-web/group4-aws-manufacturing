@@ -473,7 +473,7 @@ with left:
 @st.fragment(run_every="4s")
 def live_job_panel():
     """Only poll actual AWS job status; no simulated timers or fabricated events."""
-    if is_aws and st.session_state.get("aws_polling") and st.session_state.get("aws_job_id"):
+    if is_aws and _cfg("AWS_API_BASE_URL") and _cfg("DEMO_API_KEY") and st.session_state.get("aws_polling") and st.session_state.get("aws_job_id"):
         job_id=st.session_state["aws_job_id"]
         try:
             started=st.session_state.get("aws_poll_started")
