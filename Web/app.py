@@ -317,7 +317,7 @@ with choice:
 
 st.markdown(f'<section class="mq-hero"><div class="mq-eyebrow">EVENT-DRIVEN DATA QUALITY PLATFORM</div><h1>{html.escape(label("hero"))}<br><span style="color:#3185d5">{html.escape(label("hero2"))}</span></h1><p>{html.escape(label("subtitle"))}</p></section>',unsafe_allow_html=True)
 
-mode=st.radio("Execution mode",options=["local","aws"],format_func=lambda x:label(x),horizontal=True,key="execution_mode",label_visibility="collapsed")
+mode=st.radio("Execution mode",options=["local","aws"],format_func=lambda x:("AWS Cloud / AWS云端" if x=="aws" else "Local Demo / 本地演示"),horizontal=True,key="execution_mode",label_visibility="collapsed")
 is_aws=mode=="aws"
 # Language and mode switches must never erase a cloud task.
 
