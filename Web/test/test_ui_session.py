@@ -31,3 +31,22 @@ def test_url_restores_job_after_page_reload():
     assert not at.exception, [e.message for e in at.exception]
     assert at.session_state["aws_job_id"] == "0123456789abcdef"
     assert at.session_state["execution_mode"] == "aws"
+
+
+def test_aws_status_is_polled_without_clicking_refresh(monkeypatch):
+    from aws_client import CloudAPI
+    calls = []
+    job_id = "0123456789abcdef"
+    def fake_status(self, key):
+        calls.append(key)
+        return {"job_id": key, "status": "QUEUED"}
+    monkeypatch.setattr(CloudAPI, "status", fake_status)
+    at = AppTest.from_file(APP, default_timeout=30)
+    at.secrets["AWS_API_BASE_URL"] = "https://api.example"
+    at.secrets["DEMO_API_KEY"] = "unit-test-only-not-real"
+    at.query_params["job"] = job_id
+    at.run()
+    assert not at.exception, [e.message for e in at.exception]
+    assert calls == [job_id]
+    assert at.session_state["aws_status"]["status"] == "QUEUED"
+    assert at.session_state["aws_polling"] is True
