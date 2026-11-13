@@ -20,7 +20,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-from aws_client import CloudAPI
+from aws_client import CloudAPI, CloudAPIError
 from data_contract import MAX_BYTES, MAX_ROWS, REQUIRED, OPTIONAL, validate_file, analyze_file
 
 st.set_page_config(
@@ -65,6 +65,7 @@ section[data-testid="stSidebar"]{display:none!important}
 @keyframes mq-grow{from{width:0}to{width:var(--target)}}
 .mq-stage{display:flex;gap:13px;align-items:flex-start;border-bottom:1px solid #eef3f8;padding:9px 1px}.mq-stage:last-child{border:0}
 .mq-dot{width:27px;height:27px;flex:0 0 27px;border-radius:9px;display:grid;place-items:center;background:#edf3f9;border:1px solid #d7e3f0;color:#8ba1b8;font-size:11px;font-weight:850}
+.mq-dot.error{background:#ffe9eb;color:#be2b42;border-color:#ffc0cb}.mq-stage.error .mq-step-title{color:#be2b42}
 .mq-dot.done{background:#e2f8ef;color:#078d67;border-color:#a4e2cf}.mq-dot.active{background:#e2f0ff;color:#2375d3;border-color:#a9d2fd;animation:mq-pulse 1.7s infinite}
 @keyframes mq-pulse{50%{box-shadow:0 0 0 6px rgba(49,128,224,.09)}}
 .mq-step-title{color:#315b7e;font-size:12px;font-weight:750}.mq-step-sub{font-size:10px;color:#839db2;margin-top:2px}.mq-stage-name{margin-left:auto;font-size:10px;color:#91a8ba}
@@ -193,7 +194,7 @@ def _status_milestone(is_aws: bool, has_file: bool, valid: bool, has_result: boo
     table = {"AWAITING_EVENT":(1,14), "CREATED":(1,14), "UPLOADED":(1,14),
              "VALIDATING":(2,27), "VALIDATED":(3,41), "QUEUED":(4,56),
              "PROCESSING":(5,73), "COMPLETED":(7,100), "COMPLETED_WITH_WARNING":(7,100),
-             "INVALID_INPUT":(2,27), "FAILED":(5,73)}
+             "INVALID_INPUT":(2,27), "FAILED":(5,73), "AWS_UPLOAD_FAILED":(1,0)}
     if code in table:
         count,pct=table[code];return count,pct,code
     return (1,14,"FILE_READY") if has_file else (0,0,"WAITING")
@@ -201,12 +202,14 @@ def _status_milestone(is_aws: bool, has_file: bool, valid: bool, has_result: boo
 
 def _pipeline(is_aws:bool, has_file:bool, valid:bool, has_result:bool, code:str, job_id:str):
     count,pct,state=_status_milestone(is_aws,has_file,valid,has_result,code)
-    status_txt=label(f"status_{state}") if state in {"CREATED","UPLOADED","VALIDATING","AWAITING_EVENT","QUEUED","PROCESSING","COMPLETED","COMPLETED_WITH_WARNING","INVALID_INPUT","FAILED"} else (label("ready") if state=="FILE_READY" else label("waiting"))
+    status_txt=label(f"status_{state}") if state in {"CREATED","UPLOADED","VALIDATING","AWAITING_EVENT","QUEUED","PROCESSING","COMPLETED","COMPLETED_WITH_WARNING","INVALID_INPUT","FAILED","AWS_UPLOAD_FAILED"} else (label("ready") if state=="FILE_READY" else label("waiting"))
     pieces=[f'<div class="mq-pipeline-top"><div><div class="mq-eyebrow">{html.escape(label("progress"))}</div><div style="color:#7795ae;font-size:11px;margin-top:4px">{html.escape(status_txt)}</div></div><div class="mq-percent">{pct}%</div></div>',
             f'<div class="mq-track"><div class="mq-fill" style="--target:{pct}%"></div></div>',
             f'<div style="font-size:10px;color:#88a0b6;overflow-wrap:anywhere">{html.escape(label("job"))}: {html.escape(job_id or "—")} · v1</div>']
     for i,(title,desc) in enumerate((STAGES if is_aws else LOCAL_STAGES)[st.session_state.get("ui_lang","en")]):
-        if state in {"FAILED","INVALID_INPUT"} and i==count-1:
+        if state == "AWS_UPLOAD_FAILED" and i == 0:
+            dot_class="error";mark="!"
+        elif state in {"FAILED","INVALID_INPUT"} and i==count-1:
             dot_class="active";mark="!"
         elif i<count and state in {"COMPLETED","COMPLETED_WITH_WARNING"}:
             dot_class="done";mark="✓"
@@ -216,8 +219,8 @@ def _pipeline(is_aws:bool, has_file:bool, valid:bool, has_result:bool, code:str,
             dot_class="active";mark=str(i+1)
         else:
             dot_class="";mark=str(i+1)
-        suffix=label("complete") if dot_class=="done" else label("in_progress") if dot_class=="active" else label("waiting")
-        pieces.append(f'<div class="mq-stage"><div class="mq-dot {dot_class}">{mark}</div><div><div class="mq-step-title">{html.escape(title)}</div><div class="mq-step-sub">{html.escape(desc)}</div></div><div class="mq-stage-name">{html.escape(suffix)}</div></div>')
+        suffix=label("failed") if dot_class=="error" else label("complete") if dot_class=="done" else label("in_progress") if dot_class=="active" else label("waiting")
+        pieces.append(f'<div class="mq-stage {dot_class}"><div class="mq-dot {dot_class}">{mark}</div><div><div class="mq-step-title">{html.escape(title)}</div><div class="mq-step-sub">{html.escape(desc)}</div></div><div class="mq-stage-name">{html.escape(suffix)}</div></div>')
     return "".join(pieces)
 
 
@@ -308,7 +311,7 @@ mode=st.radio(label("mode"),options=["local","aws"],format_func=lambda x:label(x
 is_aws=mode=="aws"
 if st.session_state.get("_last_mode")!=mode:
     st.session_state["_last_mode"]=mode
-    for k in ("result","aws_status","aws_job_id","_active_file"):
+    for k in ("result","aws_status","aws_job_id","_active_file","aws_upload_error"):
         st.session_state.pop(k,None)
     st.session_state["ui_events"]=[]
 st.caption(label("mode_help_aws" if is_aws else "mode_help_local"))
@@ -337,7 +340,7 @@ with left:
             if st.button(label("reset"),use_container_width=True):
                 st.session_state["use_sample"]=False
                 st.session_state["upload_widget_seq"]+=1
-                for k in ("result","aws_status","aws_job_id","_active_file"):
+                for k in ("result","aws_status","aws_job_id","_active_file","aws_upload_error"):
                     st.session_state.pop(k,None)
                 st.session_state["ui_events"]=[]
                 st.rerun()
@@ -352,6 +355,11 @@ with left:
         if has_file:
             check=validate_file(raw,file_name)
             valid=not bool(check["errors"])
+            fingerprint=f"{mode}:{file_name}:{check['job_id']}"
+            if st.session_state.get("_last_fingerprint") != fingerprint:
+                st.session_state["_last_fingerprint"]=fingerprint
+                for k in ("result","aws_status","aws_job_id","aws_upload_error"):
+                    st.session_state.pop(k,None)
             st.caption(f'📄 {file_name} · {len(raw):,} bytes · {label("job")}: `{check["job_id"]}`')
             if valid:
                 st.success(f'{label("ready")} · {check["rows"]:,} rows',icon="✅")
@@ -372,6 +380,8 @@ with left:
         active=has_file and (valid or (is_aws and allow_invalid))
         if st.button(label("run_aws" if is_aws else "run_local"),type="primary",disabled=not active,use_container_width=True):
             if is_aws:
+                for k in ("aws_upload_error","aws_status","aws_job_id"):
+                    st.session_state.pop(k,None)
                 try:
                     with st.spinner(label("in_progress")):
                         info=_api().upload(file_name,raw)
@@ -381,9 +391,17 @@ with left:
                     st.session_state.pop("result",None)
                     _event(f'S3 raw/ upload accepted · {info["job_id"]}')
                     st.success(label("aws_uploaded"))
-                except Exception as e:
-                    st.error(f'{label("aws_upload_error")}: {e}')
-                    _event(f'Upload error · {type(e).__name__}')
+                except CloudAPIError as e:
+                    st.session_state["aws_upload_error"]={"stage":e.stage,"status":e.status_code,"code":e.code,"request_id":e.request_id,"reason":e.reason}
+                    st.error(f"{label('aws_upload_error')}: {e}")
+                    tips={"ExpiredToken":"AWS temporary credentials expired. Restart Learner Lab and refresh Web API Lambda.","SignatureDoesNotMatch":"Check presigned PUT Content-Type, HTTP method and signing region.","AccessDenied":"Check Lambda role s3:PutObject, S3 bucket policy and temporary AWS credentials."}
+                    tip=tips.get(e.code,"Check Web API Lambda credentials, S3 permissions and request ID.")
+                    st.info(tip if st.session_state.ui_lang=="en" else {"ExpiredToken":"AWS临时凭证可能过期，请检查Learner Lab并刷新Web API Lambda。","SignatureDoesNotMatch":"检查预签名PUT的Content-Type、HTTP方法及签名区域。","AccessDenied":"检查Lambda角色的S3写入权限、桶策略以及临时AWS凭证。"}.get(e.code,"请检查Web API Lambda凭证、S3权限与Request ID。"))
+                    _event(f"{e.stage} · FAILED · HTTP {e.status_code or 'N/A'} · {e.code}")
+                except Exception:
+                    st.session_state["aws_upload_error"]={"stage":"UNKNOWN","status":None,"code":"UNEXPECTED_ERROR"}
+                    st.error("Upload failed; check Streamlit logs." if st.session_state.ui_lang=="en" else "上传失败，请检查Streamlit日志。")
+                    _event("Upload error · UNEXPECTED_ERROR")
             else:
                 try:
                     with st.spinner(label("in_progress")):
@@ -419,6 +437,10 @@ with right:
         st.markdown(f'<div class="mq-p-head"><h3>{html.escape(label("pipeline"))}</h3><p>{html.escape(label("pipeline_sub"))}</p></div>',unsafe_allow_html=True)
         result=st.session_state.get("result")
         aws_status=st.session_state.get("aws_status",{}).get("status", "")
+        failure=st.session_state.get("aws_upload_error") if is_aws else None
+        if failure:
+            aws_status="AWS_UPLOAD_FAILED"
+            st.error(f"{'S3 upload failed' if st.session_state.ui_lang=='en' else 'S3上传失败'} · HTTP {failure['status'] or 'N/A'} · {failure['code']}")
         job=st.session_state.get("aws_job_id", "") if is_aws else (check["job_id"] if check else "")
         st.markdown(_pipeline(is_aws,has_file,valid,bool(result),aws_status,job),unsafe_allow_html=True)
         st.markdown(f'<div style="margin-top:13px;font-size:11px;color:#547998;font-weight:750">⌘ {html.escape(label("events"))}</div>',unsafe_allow_html=True)
