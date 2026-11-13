@@ -63,13 +63,13 @@ def test_duplicate_notice_survives_language_changes():
     }
     at.run()
     assert not at.exception, [e.message for e in at.exception]
-    assert any("Duplicate content detected" in w.message for w in at.warning)
+    assert any("Duplicate content detected" in w.value for w in at.warning)
     assert "本地演示" not in str(at.radio[1].options)
     at.radio[0].set_value("zh").run()
     assert not at.exception, [e.message for e in at.exception]
-    assert any("检测到相同内容" in w.message for w in at.warning)
+    assert any("检测到相同内容" in w.value for w in at.warning)
     assert "AWS云端模式" in str(at.radio[1].options)
     at.radio[0].set_value("en").run()
     assert not at.exception, [e.message for e in at.exception]
-    assert any("Duplicate content detected" in w.message for w in at.warning)
+    assert any("Duplicate content detected" in w.value for w in at.warning)
     assert at.session_state["aws_notice"]["job_id"] == "0123456789abcdef"
