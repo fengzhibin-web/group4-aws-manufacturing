@@ -78,6 +78,27 @@ header[data-testid="stHeader"]{background:rgba(246,250,254,.96)!important;box-sh
 .mq-log div{padding:3px 0;border-bottom:1px solid #edf2f9}.mq-log div:last-child{border:0}
 .mq-section-title{font-size:24px;color:#1c446b;font-weight:850;margin:20px 0 5px}.mq-footer{color:#879caf;font-size:11px;border-top:1px solid #e0ebf4;margin-top:26px;padding-top:13px}
 @media(max-width:800px){.block-container{padding:1rem .85rem 3rem!important}.mq-hero h1{font-size:27px!important}.mq-region{font-size:9px}.mq-brand-title{font-size:13px}.mq-stage-name{display:none}}
+/* Self-contained service icon system: no CDN or external image requests. */
+.mq-architecture{border:1px solid #d5e3f0;border-radius:18px;background:#fff;padding:17px 20px 15px;margin:0 0 12px;box-shadow:0 8px 25px rgba(31,75,121,.05)}
+.mq-arch-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:13px}
+.mq-arch-head strong{font-size:15px;color:#183c65}.mq-arch-tag{color:#3676b4;font-size:10px;background:#edf5fe;border:1px solid #d6e6f7;padding:4px 9px;border-radius:20px;font-weight:750;white-space:nowrap}
+.mq-arch-flow{display:grid;grid-template-columns:minmax(0,1fr) 17px minmax(0,1fr) 17px minmax(0,1fr) 17px minmax(0,1fr) 17px minmax(0,1fr) 17px minmax(0,1fr);align-items:stretch;gap:4px}
+.mq-arch-node{border:1px solid #e0e9f2;border-radius:11px;padding:10px 8px;min-width:0;background:#f9fbfe;display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+.mq-arch-node b{font-size:12px;color:#214767;line-height:1.35;overflow-wrap:anywhere}.mq-arch-node small{font-size:10px;line-height:1.4;color:#657f98;overflow-wrap:anywhere}
+.mq-arch-arrow{display:grid;place-items:center;color:#7799bd;font-size:17px;font-weight:800}
+.mq-arch-foot{margin-top:12px;display:flex;gap:7px;flex-wrap:wrap;align-items:center;font-size:11px;color:#56728d}
+.mq-arch-aux{display:inline-flex;align-items:center;gap:6px;background:#f4f8fc;border:1px solid #e0eaf3;border-radius:8px;padding:5px 8px}
+.mq-service-icon{width:34px;height:34px;flex:0 0 34px;display:inline-grid;place-items:center;border-radius:8px;color:white;background:var(--service);box-shadow:0 2px 6px #20476a18}
+.mq-service-icon svg{width:21px;height:21px;display:block}
+.mq-arch-aux .mq-service-icon{width:23px;height:23px;flex-basis:23px;border-radius:6px}.mq-arch-aux .mq-service-icon svg{width:15px;height:15px}
+.mq-stage{position:relative;gap:10px;align-items:center;padding:8px 10px;margin:0 0 7px;border:1px solid #e0eaf4;border-radius:11px;background:#f9fbfe}
+.mq-stage:last-child{border:1px solid #e0eaf4}.mq-stage:not(:last-child):after{content:"";position:absolute;left:26px;bottom:-8px;height:7px;border-left:2px solid #b8cde0}
+.mq-stage.done{border-color:#b8dfd1;background:#f2faf7}.mq-stage.active{border-color:#a8cffa;background:#edf6ff}.mq-stage.error{border-color:#f0b2ba;background:#fff3f4}
+.mq-stage .mq-step-title{font-size:12px;color:#244a6d}.mq-stage .mq-step-sub{font-size:10px;color:#5e7890;line-height:1.4}
+.mq-stage-name{display:flex;align-items:center;gap:5px;white-space:nowrap;font-size:10px;font-weight:700;color:#6b8197}
+.mq-stage.done .mq-stage-name{color:#137b58}.mq-stage.active .mq-stage-name{color:#236fc0}.mq-stage.error .mq-stage-name{color:#b52e43}
+@media(max-width:1150px){.mq-arch-flow{display:flex;flex-wrap:wrap;gap:6px}.mq-arch-node{flex:1 1 105px}.mq-arch-arrow{flex:0 0 13px}}
+@media(max-width:650px){.mq-arch-flow{display:grid;grid-template-columns:1fr}.mq-arch-arrow{transform:rotate(90deg);height:14px}.mq-arch-node{flex-direction:row;align-items:center;flex-wrap:wrap}.mq-arch-node small{flex:1 1 100%}.mq-arch-tag{white-space:normal}.mq-stage-name{display:flex;white-space:normal}}
 </style>
 """
 
@@ -228,6 +249,46 @@ def _status_milestone(is_aws: bool, has_file: bool, valid: bool, has_result: boo
     return (0,0,"WAITING") if is_aws else ((1,14,"FILE_READY") if has_file else (0,0,"WAITING"))
 
 
+# Original, inline pictograms use AWS service-category colors; no external assets.
+_SERVICE_ICONS = {
+    "browser": ("#168aad", '<rect x="3" y="4" width="18" height="15" rx="2"/><path d="M3 8h18M8 22h8M12 19v3"/>'),
+    "api": ("#8758c9", '<path d="M9 5H5v14h4M15 5h4v14h-4M10 15l4-6M9 9l-3 3 3 3M15 9l3 3-3 3"/>'),
+    "s3": ("#29965c", '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5l2 14c0 2 12 2 12 0l2-14M6 12c3 2 9 2 12 0"/>'),
+    "lambda": ("#e58935", '<path d="M5 4h5l6 15h4M12 11l-7 8H2"/>'),
+    "hash": ("#6479a6", '<path d="M10 3L6 21M18 3l-4 18M4 9h17M2 15h17"/>'),
+    "sqs": ("#c34a8e", '<rect x="3" y="4" width="7" height="6" rx="1"/><rect x="14" y="14" width="7" height="6" rx="1"/><path d="M10 7h7v4M14 17H7v-4M14 9l3 3 3-3M10 15l-3-3-3 3"/>'),
+    "chart": ("#168e91", '<path d="M4 3v17h17M8 16v-5M13 16V6M18 16v-8"/>'),
+    "database": ("#467bcc", '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 4 16 4 16 0V5M4 12c0 4 16 4 16 0"/>'),
+    "report": ("#407fb0", '<path d="M5 3h10l4 4v14H5zM14 3v5h5M8 12h8M8 16h8"/>'),
+    "dlq": ("#bb5261", '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 8v5M12 16h.01"/>'),
+}
+
+def _service_icon(name: str) -> str:
+    color, drawing = _SERVICE_ICONS[name]
+    return f'<span class="mq-service-icon" style="--service:{color}" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">{drawing}</svg></span>'
+
+def _architecture() -> str:
+    nodes = [
+        ("browser", tr("Streamlit Web", "Streamlit 网页"), tr("CSV upload · preflight", "文件上传 · 预检查")),
+        ("s3", "Amazon S3", tr("Presigned PUT · raw CSV", "预签名上传 · 原始 CSV")),
+        ("lambda", tr("Validation Lambda", "校验 Lambda"), tr("S3 event · schema", "S3 事件 · 结构校验")),
+        ("sqs", "Amazon SQS", tr("Async queue · retries", "异步队列 · 重试")),
+        ("lambda", tr("Processing Lambda", "处理 Lambda"), tr("Cleaning · metrics", "数据清洗 · 指标计算")),
+        ("report", tr("S3 + DynamoDB", "S3 + DynamoDB"), tr("Results · job status", "结果文件 · 任务状态")),
+    ]
+    cards = []
+    for icon, title, detail in nodes:
+        cards.append(f'<div class="mq-arch-node">{_service_icon(icon)}<b>{html.escape(title)}</b><small>{html.escape(detail)}</small></div>')
+    flow = '<span class="mq-arch-arrow" aria-hidden="true">→</span>'.join(cards)
+    auxiliary = [
+        ("api", tr("API Gateway · upload / status", "API Gateway · 上传 / 查询")),
+        ("database", tr("DynamoDB · job tracking", "DynamoDB · 任务追踪")),
+        ("dlq", tr("SQS DLQ · failed retries", "SQS DLQ · 重试失败")),
+        ("chart", tr("Dashboard · result visualization", "仪表板 · 结果可视化")),
+    ]
+    foot = "".join(f'<span class="mq-arch-aux">{_service_icon(icon)}{html.escape(title)}</span>' for icon,title in auxiliary)
+    return f'<section class="mq-architecture"><div class="mq-arch-head"><strong>{html.escape(tr("AWS event-driven architecture", "AWS 事件驱动架构"))}</strong><span class="mq-arch-tag">{html.escape(tr("SERVERLESS · AWS CLOUD", "无服务器 · AWS 云端"))}</span></div><div class="mq-arch-flow">{flow}</div><div class="mq-arch-foot">{foot}</div></section>'
+
 def _pipeline(is_aws:bool, has_file:bool, valid:bool, has_result:bool, code:str, job_id:str):
     count,pct,state=_status_milestone(is_aws,has_file,valid,has_result,code)
     status_txt=label(f"status_{state}") if state in {"CREATED","UPLOADED","VALIDATING","AWAITING_EVENT","QUEUED","PROCESSING","COMPLETED","COMPLETED_WITH_WARNING","INVALID_INPUT","FAILED","AWS_UPLOAD_FAILED"} else (label("ready") if state=="FILE_READY" else label("waiting"))
@@ -248,7 +309,8 @@ def _pipeline(is_aws:bool, has_file:bool, valid:bool, has_result:bool, code:str,
         else:
             dot_class="";mark=str(i+1)
         suffix=label("failed") if dot_class=="error" else label("complete") if dot_class=="done" else label("in_progress") if dot_class=="active" else label("waiting")
-        pieces.append(f'<div class="mq-stage {dot_class}"><div class="mq-dot {dot_class}">{mark}</div><div><div class="mq-step-title">{html.escape(title)}</div><div class="mq-step-sub">{html.escape(desc)}</div></div><div class="mq-stage-name">{html.escape(suffix)}</div></div>')
+        service = ("s3", "lambda", "hash", "sqs", "lambda", "chart", "database")[i]
+        pieces.append(f'<div class="mq-stage {dot_class}">{_service_icon(service)}<div style="flex:1;min-width:0"><div class="mq-step-title">{html.escape(title)}</div><div class="mq-step-sub">{html.escape(desc)}</div></div><div class="mq-stage-name"><span aria-hidden="true">{mark}</span>{html.escape(suffix)}</div></div>')
     return "".join(pieces)
 
 
@@ -360,17 +422,14 @@ with st.sidebar:
         st.error(label("aws_missing"))
     st.markdown("---")
     st.markdown(tr("**Workflow**", "**工作流程**"))
-    for i, (stage, _) in enumerate(STAGES[st.session_state.ui_lang], 1):
-        st.caption(f"{i:02d}  {stage}")
+    for icon, (stage, _) in zip(("s3","lambda","hash","sqs","lambda","chart","database"), STAGES[st.session_state.ui_lang]):
+        st.markdown(f'<div style="display:flex;gap:8px;align-items:center;padding:4px 0;color:#315b7e;font-size:12px">{_service_icon(icon)}<span>{html.escape(stage)}</span></div>', unsafe_allow_html=True)
     st.markdown("---")
     st.caption(tr("Preflight: Streamlit server rules. Processing: AWS Lambda. Additional analytics: calculated from AWS outputs.", "预检查：Streamlit 服务端规则。正式处理：AWS Lambda。附加分析：基于 AWS 输出计算。"))
     st.caption(tr("Same CSV bytes reuse the same job ID.", "相同 CSV 字节内容复用同一任务 ID。"))
-st.caption(tr("AWS cloud only · S3 → Lambda → SQS → Lambda → S3 / DynamoDB", "仅 AWS 云端模式 · S3 → Lambda → SQS → Lambda → S3 / DynamoDB"))
+st.markdown(_architecture(), unsafe_allow_html=True)
 if not configured:
     st.warning(label("aws_missing"))
-with st.expander(tr("How the system works", "系统工作流程与功能")):
-    st.write(tr("Upload a manufacturing CSV; the Web server previews and checks it. AWS receives the file through a presigned S3 URL, validates its schema, queues a job, cleans records, calculates metrics and saves results. The dashboard polls the job and displays downloadable reports and additional visualizations.", "上传制造业 CSV 后，Web 服务端预览并检查数据。AWS 通过预签名链接接收文件、验证结构、排队、清洗、统计并保存结果。仪表板查询任务状态，展示可下载报告和附加图表。"))
-    st.caption(tr("Temperature warnings use an illustrative 60–90°C range; they are not industrial acceptance limits. Statistical associations do not establish causation.", "温度预警采用演示用 60–90°C 区间，并非工业合格标准；统计关联不代表因果关系。"))
 
 left,right=st.columns([0.94,1.06],gap="large",vertical_alignment="top")
 with left:
