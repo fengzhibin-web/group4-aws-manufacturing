@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
+import altair as alt
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -591,7 +592,7 @@ result=st.session_state.get("result_aws" if is_aws else "result_local")
 if result:
     report,cleaned,origin=result
     st.caption(f'{label("source")}: {label("origin_aws" if origin=="aws" else "origin_local")}')
-    tab_chart,tab_explore,tab_quality,tab_download=st.tabs([label("charts"),tr("Interactive analysis", "交互分析"),label("quality"),label("downloads")])
+    tab_explore,tab_chart,tab_quality,tab_download=st.tabs([tr("Interactive analysis", "交互分析"),tr("Overview", "统计概览"),label("quality"),label("downloads")])
     with tab_chart:
         _render_analytics(report)
         # Additional breakdowns remain deterministic, no AI claims.
@@ -630,8 +631,18 @@ if result:
                 with a:
                     st.markdown("**"+tr("Machine × shift defect rate (%)","机器 × 班次缺陷率 (%)")+"**")
                     if not good.empty and {"machine_id","shift"}.issubset(good.columns):
-                        heat=good.pivot_table(index="machine_id",columns="shift",values="label_num",aggfunc="mean")*100
-                        st.dataframe(heat.round(2),use_container_width=True)
+                        heat=good.groupby(["machine_id","shift"])["label_num"].agg(rate="mean",samples="count").reset_index()
+                        heat["rate_pct"]=heat["rate"]*100
+                        heat["display"]=heat["rate_pct"].map(lambda v: f"{v:.1f}%")
+                        heat=heat.head(4000)
+                        grid=alt.Chart(heat).encode(
+                            x=alt.X("shift:N",title=tr("Shift","班次"),sort=["Day","Evening","Night"]),
+                            y=alt.Y("machine_id:N",title=tr("Machine","机器"),sort="ascending"),
+                            tooltip=[alt.Tooltip("machine_id:N",title=tr("Machine","机器")),alt.Tooltip("shift:N",title=tr("Shift","班次")),alt.Tooltip("rate_pct:Q",title=tr("Defect rate (%)","缺陷率 (%)"),format=".1f"),alt.Tooltip("samples:Q",title=tr("Valid labels","有效标签"))])
+                        cells=grid.mark_rect(cornerRadius=5,stroke="white",strokeWidth=3).encode(color=alt.Color("rate_pct:Q",title=tr("Defect rate (%)","缺陷率 (%)"),scale=alt.Scale(range=["#d9eee5","#f3e7b4","#ef9b8a"])))
+                        values=grid.mark_text(color="#183c65",fontSize=13).encode(text="display:N")
+                        st.altair_chart((cells+values).properties(height=max(160,min(440,40*heat["machine_id"].nunique()))),use_container_width=True)
+                        st.caption(tr("Color shows relative defect rate; hover to inspect valid sample counts.","颜色表示相对缺陷率，悬停可查看有效样本数。"))
                     else:
                         st.caption(label("no_data"))
                 with b:
@@ -639,7 +650,9 @@ if result:
                     if "defect_type" in good:
                         counts=good.loc[good["label_num"]==1,"defect_type"].replace("",tr("Unspecified","未标注")).value_counts()
                         if not counts.empty:
-                            st.bar_chart(counts)
+                            bars=counts.rename_axis("defect_type").reset_index(name="count").head(30)
+                            chart=alt.Chart(bars).mark_bar(color="#438ce1",cornerRadiusEnd=5).encode(x=alt.X("count:Q",title=tr("Defective records","缺陷记录数")),y=alt.Y("defect_type:N",title=None,sort="-x"),tooltip=[alt.Tooltip("defect_type:N",title=tr("Defect type","缺陷类型")),alt.Tooltip("count:Q",title=tr("Count","数量"))]).properties(height=max(160,min(500,len(bars)*32)))
+                            st.altair_chart(chart,use_container_width=True)
                         else:
                             st.caption(label("no_data"))
                     else:
@@ -649,10 +662,20 @@ if result:
                     temp=pd.DataFrame({"time":pd.to_datetime(data["timestamp"],errors="coerce",utc=True),"temperature":pd.to_numeric(data["temperature"],errors="coerce")}).dropna()
                     temp=temp[temp["temperature"].between(-1e6,1e6)].sort_values("time").tail(4000)
                     if not temp.empty:
-                        temp["Lower limit"]=60
-                        temp["Upper limit"]=90
-                        st.line_chart(temp.set_index("time"),y_label="°C")
-                        st.caption(tr("Up to 4,000 latest valid readings; illustrative limits only.","最多展示最近 4,000 条有效读数；限值仅为演示。"))
+                        temp["outside"]=~temp["temperature"].between(60,90)
+                        low_count=int((temp["temperature"]<60).sum())
+                        high_count=int((temp["temperature"]>90).sum())
+                        m1,m2,m3=st.columns(3)
+                        m1.metric(tr("Below 60°C","低于 60°C"),low_count)
+                        m2.metric(tr("Above 90°C","高于 90°C"),high_count)
+                        m3.metric(tr("Out of range","超出区间"),low_count+high_count)
+                        base=alt.Chart(temp).encode(x=alt.X("time:T",title=tr("Time (UTC)","时间 (UTC)")),y=alt.Y("temperature:Q",title=tr("Temperature (°C)","温度 (°C)"),scale=alt.Scale(zero=False)),tooltip=[alt.Tooltip("time:T",title=tr("Time (UTC)","时间 (UTC)")),alt.Tooltip("temperature:Q",title=tr("Temperature (°C)","温度 (°C)"),format=".1f")])
+                        band=alt.Chart(pd.DataFrame({"start":[temp["time"].min()],"end":[temp["time"].max()],"lower":[60],"upper":[90]})).mark_rect(color="#d9eee5",opacity=0.75).encode(x="start:T",x2="end:T",y="lower:Q",y2="upper:Q")
+                        limits=alt.Chart(pd.DataFrame({"limit":[60,90]})).mark_rule(color="#d38b36",strokeDash=[6,4]).encode(y="limit:Q")
+                        line=base.mark_line(color="#287dda",strokeWidth=2)
+                        dots=base.transform_filter(alt.datum.outside==True).mark_circle(color="#d6533b",size=70,opacity=1)
+                        st.altair_chart((band+limits+line+dots).properties(height=330).interactive(bind_y=False),use_container_width=True)
+                        st.caption(tr("Green band: illustrative 60–90°C range. Red dots: out-of-range readings. Latest 4,000 valid readings at most.","绿色区域：演示温度区间 60–90°C；红点：超限读数。最多展示最近 4,000 条有效读数。"))
                     else:
                         st.caption(label("no_data"))
     with tab_quality:
