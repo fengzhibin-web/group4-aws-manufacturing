@@ -28,14 +28,14 @@ st.set_page_config(
     page_title="Manufacturing Quality Intelligence | Group 4",
     page_icon="🏭",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 CSS = r"""
 <style>
 :root{--mq-blue:#287dda;--mq-green:#18a786;--mq-navy:#183c65;--mq-muted:#7189a2;--mq-border:#dbe8f6}
 .stApp {background:radial-gradient(circle at 12% 0%,#e7f3ff 0,transparent 37%),linear-gradient(180deg,#f6fbff,#f4f8fd 65%,#f8fbff)!important;color:#1b3752!important}
-section[data-testid="stSidebar"]{display:none!important}
+section[data-testid="stSidebar"]{background:#edf4fb!important}
 header[data-testid="stHeader"]{background:rgba(246,250,254,.96)!important;box-shadow:none!important;border-bottom:0!important}
 [data-testid="stToolbar"]{background:transparent!important}
 [data-testid="stDecoration"]{display:none!important}
@@ -166,6 +166,17 @@ WARNING_TRANSLATIONS = {
 }
 
 
+WARNING_TRANSLATIONS.update({
+    "只接受 .csv 文件": "Only .csv files are accepted",
+    "文件需使用 UTF-8 编码（支持 UTF-8 BOM）": "Use UTF-8 encoding (UTF-8 BOM supported)",
+    "CSV缺少表头": "CSV header is missing",
+    "列名重复": "Duplicate column names",
+    "CSV没有数据行": "CSV contains no data rows",
+    "行的列数与表头不一致（CSV行号：": "Column count differs from header (CSV row: ",
+})
+def tr(en: str, zh: str) -> str:
+    return zh if st.session_state.get("ui_lang") == "zh" else en
+
 def label(key: str) -> str:
     return LANG[st.session_state.get("ui_lang", "en")].get(key, key)
 
@@ -247,7 +258,7 @@ def _translate_warnings(warnings:list[str]):
     for line in warnings:
         for z,en in WARNING_TRANSLATIONS.items():
             line=line.replace(z,en)
-        line=line.replace(" 行"," rows").replace("：", ": ")
+        line=line.replace(" 行"," rows").replace("：", ": ").replace("）", ")")
         translated.append(line)
     return translated
 
@@ -261,10 +272,12 @@ def _load_result_from_aws(job_id:str,result:dict):
     report=api.fetch_json(report_url) if report_url else {}
     clean_bytes=api.fetch_bytes(cleaned_url) if cleaned_url else None
     cleaned=pd.read_csv(io.BytesIO(clean_bytes),dtype=str).fillna("") if clean_bytes else None
+    flags_from_aws = "quality_flags" in report
     if clean_bytes:
         derived,_=analyze_file(clean_bytes, f"{job_id}.csv")
         for name in ("by_shift","by_product","by_supplier_batch","by_day","quality_flags"):
             report.setdefault(name,derived.get(name,{}))
+    st.session_state["flags_source"] = "aws" if flags_from_aws else "web"
     st.session_state["result_aws"]=(report, cleaned, "aws")
 
 
@@ -319,8 +332,9 @@ url_job = str(st.query_params.get("job", "")).lower()
 if re.fullmatch(r"[0-9a-f]{16}", url_job) and not st.session_state.get("aws_job_id"):
     st.session_state["aws_job_id"] = url_job
     st.session_state["aws_polling"] = True
-if "execution_mode" not in st.session_state:
-    st.session_state["execution_mode"] = "aws" if (st.session_state.get("aws_job_id") or (_cfg("AWS_API_BASE_URL") and _cfg("DEMO_API_KEY"))) else "local"
+    st.session_state["aws_poll_started"] = datetime.now(timezone.utc).timestamp()
+st.session_state["execution_mode"] = "aws"
+st.session_state.pop("result_local", None)
 if "job_id_input" not in st.session_state:
     st.session_state["job_id_input"] = st.session_state.get("aws_job_id", "")
 st.markdown(CSS,unsafe_allow_html=True)
@@ -332,26 +346,37 @@ with choice:
 
 st.markdown(f'<section class="mq-hero"><div class="mq-eyebrow">EVENT-DRIVEN DATA QUALITY PLATFORM</div><h1>{html.escape(label("hero"))}<br><span style="color:#3185d5">{html.escape(label("hero2"))}</span></h1><p>{html.escape(label("subtitle"))}</p></section>',unsafe_allow_html=True)
 
-mode=st.radio(
-    label("mode"), options=["local","aws"],
-    index=["local","aws"].index(st.session_state.get("execution_mode","local")),
-    format_func=lambda x, ui_lang=st.session_state.ui_lang:LANG[ui_lang].get(x,x), horizontal=True,
-    key=f"mode_selector_{st.session_state.ui_lang}", label_visibility="collapsed",
-)
-st.session_state["execution_mode"]=mode
-is_aws=mode=="aws"
-# Language and mode switches must never erase a cloud task.
-
-if is_aws:
-    if not (_cfg("AWS_API_BASE_URL") and _cfg("DEMO_API_KEY")):
-        st.warning(label("aws_missing"))
+# AWS is the only execution mode.
+is_aws = True
+configured = bool(_cfg("AWS_API_BASE_URL") and _cfg("DEMO_API_KEY"))
+with st.sidebar:
+    st.markdown("### Manufacturing IQ")
+    st.caption(tr("Group 4 · AWS cloud workspace", "第4组 · AWS 云端工作台"))
+    if configured:
+        st.success(tr("AWS API configured", "AWS API 已配置"))
+        st.caption(tr("Availability is verified when a request succeeds.", "实际连通性以请求成功为准。"))
+    else:
+        st.error(label("aws_missing"))
+    st.markdown("---")
+    st.markdown(tr("**Workflow**", "**工作流程**"))
+    for i, (stage, _) in enumerate(STAGES[st.session_state.ui_lang], 1):
+        st.caption(f"{i:02d}  {stage}")
+    st.markdown("---")
+    st.caption(tr("Preflight: Streamlit server rules. Processing: AWS Lambda. Additional analytics: calculated from AWS outputs.", "预检查：Streamlit 服务端规则。正式处理：AWS Lambda。附加分析：基于 AWS 输出计算。"))
+    st.caption(tr("Same CSV bytes reuse the same job ID.", "相同 CSV 字节内容复用同一任务 ID。"))
+st.caption(tr("AWS cloud only · S3 → Lambda → SQS → Lambda → S3 / DynamoDB", "仅 AWS 云端模式 · S3 → Lambda → SQS → Lambda → S3 / DynamoDB"))
+if not configured:
+    st.warning(label("aws_missing"))
+with st.expander(tr("How the system works", "系统工作流程与功能")):
+    st.write(tr("Upload a manufacturing CSV; the Web server previews and checks it. AWS receives the file through a presigned S3 URL, validates its schema, queues a job, cleans records, calculates metrics and saves results. The dashboard polls the job and displays downloadable reports and additional visualizations.", "上传制造业 CSV 后，Web 服务端预览并检查数据。AWS 通过预签名链接接收文件、验证结构、排队、清洗、统计并保存结果。仪表板查询任务状态，展示可下载报告和附加图表。"))
+    st.caption(tr("Temperature warnings use an illustrative 60–90°C range; they are not industrial acceptance limits. Statistical associations do not establish causation.", "温度预警采用演示用 60–90°C 区间，并非工业合格标准；统计关联不代表因果关系。"))
 
 left,right=st.columns([0.94,1.06],gap="large",vertical_alignment="top")
 with left:
     with st.container(border=True):
         st.markdown(f'<div class="mq-p-head"><h3>{html.escape(label("data"))}</h3><p>{html.escape(label("data_sub"))}</p></div>',unsafe_allow_html=True)
         if "upload_widget_seq" not in st.session_state:st.session_state["upload_widget_seq"]=0
-        upload=st.file_uploader("CSV dataset",type=["csv"],key=f"csv_upload_{st.session_state.upload_widget_seq}")
+        upload=st.file_uploader(label("file"),type=["csv"],key=f"csv_upload_{st.session_state.upload_widget_seq}")
         bc,br=st.columns([1,1])
         with bc:
             if st.button(label("sample"),use_container_width=True):
@@ -389,7 +414,7 @@ with left:
                 st.session_state.pop("aws_notice",None)
             st.caption(f'📄 {file_name} · {len(raw):,} bytes · {label("job")}: `{check["job_id"]}`')
             if valid:
-                st.success(f'{label("ready")} · {check["rows"]:,} rows',icon="✅")
+                st.success(f'{label("ready")} · {check["rows"]:,} {tr("rows", "行")}',icon="✅")
             else:
                 for err in _translate_warnings(check["errors"]):
                     (st.warning if is_aws else st.error)(err)
@@ -397,7 +422,7 @@ with left:
                 if check["frame"] is not None:
                     st.dataframe(check["frame"].head(15),hide_index=True,use_container_width=True)
             if check["warnings"]:
-                with st.expander(f'{label("warnings")} ({len(check["warnings"])})'):
+                with st.expander(f'{tr("Web preflight warnings", "Web 预检查警告")} ({len(check["warnings"])})', expanded=True):
                     for warning in _translate_warnings(check["warnings"]):st.warning(warning)
         else:
             st.caption(label("not_selected"))
@@ -406,8 +431,8 @@ with left:
         if is_aws and has_file and not valid:
             st.info("AWS will validate the submitted file." if st.session_state.ui_lang=="en" else "文件提交后将由AWS进行最终校验。")
         over_row_limit=has_file and any("50,000" in str(err) and "超过" in str(err) for err in (check["errors"] if check else []))
-        active=has_file and 0<len(raw or b"")<=MAX_BYTES and not over_row_limit and (is_aws or valid)
-        if st.button(label("run_aws" if is_aws else "run_local"),type="primary",disabled=not active,use_container_width=True):
+        active=configured and has_file and 0<len(raw or b"")<=MAX_BYTES and not over_row_limit
+        if st.button(label("run_aws"),type="primary",disabled=not active,use_container_width=True):
             if is_aws:
                 st.session_state.pop("aws_upload_error",None)
                 st.session_state.pop("aws_notice",None)
@@ -420,6 +445,8 @@ with left:
                     st.query_params["job"]=job_id
                     st.session_state.pop("result_aws",None)
                     st.session_state.pop("aws_result_error",None)
+                    st.session_state["aws_poll_started"]=datetime.now(timezone.utc).timestamp()
+                    st.session_state.pop("aws_poll_error", None)
                     if info.get("duplicate"):
                         existing=info.get("existing",{})
                         st.session_state["aws_status"]=existing
@@ -449,17 +476,6 @@ with left:
                     st.session_state["aws_upload_error"]={"stage":"UNKNOWN","status":None,"code":"UNEXPECTED_ERROR"}
                     st.error("Upload failed; check Streamlit logs." if st.session_state.ui_lang=="en" else "上传失败，请检查Streamlit日志。")
                     _event("Upload error · UNEXPECTED_ERROR")
-            else:
-                try:
-                    with st.spinner(label("in_progress")):
-                        report,cleaned=analyze_file(raw,file_name)
-                    st.session_state["result_local"]=(report,cleaned,"local")
-                    _event(f'Local validation, cleaning and analysis completed · {report["job_id"]}')
-                    st.success(label("complete"))
-                except Exception as e:
-                    st.error(str(e))
-
-
 
         notice=st.session_state.get("aws_notice") if is_aws else None
         if notice and notice.get("type")=="duplicate" and notice.get("job_id")==st.session_state.get("aws_job_id"):
@@ -473,12 +489,15 @@ with left:
         with st.container(border=True):
             st.markdown(f'**{label("lookup")}**')
             typed=st.text_input("Job ID",max_chars=64,key="job_id_input")
-            if st.button(label("refresh"),disabled=not bool(re.fullmatch(r"[0-9a-fA-F]{16}",typed.strip())),use_container_width=True):
+            if st.button(label("refresh"),disabled=not configured or not bool(re.fullmatch(r"[0-9a-fA-F]{16}",typed.strip())),use_container_width=True):
                 try:
                     job_id=typed.strip().lower()
                     with st.spinner(label("in_progress")):
                         reply=_api().status(job_id)
                     previous=st.session_state.get("aws_status",{}).get("status")
+                    if job_id != st.session_state.get("aws_job_id"):
+                        for key in ("result_aws", "aws_result_error", "aws_poll_error", "aws_notice"):
+                            st.session_state.pop(key, None)
                     st.session_state["aws_status"]=reply
                     st.session_state["aws_job_id"]=job_id
                     st.query_params["job"]=job_id
@@ -546,6 +565,7 @@ def live_job_panel():
             st.error(f"{'Upload failed' if st.session_state.ui_lang=='en' else '上传失败'} · HTTP {failure['status'] or 'N/A'} · {failure['code']}")
         job=st.session_state.get("aws_job_id", "") if is_aws else (check["job_id"] if check else "")
         st.markdown(_pipeline(is_aws,has_file,valid,bool(result),aws_status,job),unsafe_allow_html=True)
+        st.caption(tr("Milestones are inferred from AWS job status; percentages are illustrative, not measured progress.", "里程碑根据 AWS 任务状态推断；百分比仅为示意，不是实际测量进度。"))
         status_txt=st.session_state.get("aws_status",{}).get("status","")
         if is_aws and status_txt=="INVALID_INPUT":
             errs=st.session_state.get("aws_status",{}).get("validation_errors",[])
@@ -571,7 +591,7 @@ result=st.session_state.get("result_aws" if is_aws else "result_local")
 if result:
     report,cleaned,origin=result
     st.caption(f'{label("source")}: {label("origin_aws" if origin=="aws" else "origin_local")}')
-    tab_chart,tab_quality,tab_download=st.tabs([label("charts"),label("quality"),label("downloads")])
+    tab_chart,tab_explore,tab_quality,tab_download=st.tabs([label("charts"),tr("Interactive analysis", "交互分析"),label("quality"),label("downloads")])
     with tab_chart:
         _render_analytics(report)
         # Additional breakdowns remain deterministic, no AI claims.
@@ -580,24 +600,89 @@ if result:
             with holder:
                 st.markdown(f'**{name}**')
                 obj=report.get(key,{})
-                rows=[{"Segment":str(seg),"Defect rate (%)":round(v.get("defect_rate",0)*100,2),"Labeled":v.get("labeled",0)} for seg,v in obj.items() if v.get("defect_rate") is not None]
+                rows=[{tr("Segment","分组"):str(seg),tr("Defect rate (%)","缺陷率 (%)"):round(v.get("defect_rate",0)*100,2),tr("Labeled","有效标签"):v.get("labeled",0)} for seg,v in obj.items() if v.get("defect_rate") is not None]
                 if rows:
-                    df=pd.DataFrame(rows).set_index("Segment")
-                    st.bar_chart(df["Defect rate (%)"],y_label="%")
+                    df=pd.DataFrame(rows).set_index(tr("Segment","分组"))
+                    st.bar_chart(df[tr("Defect rate (%)","缺陷率 (%)")],y_label="%")
                 else:st.caption(label("no_data"))
+    with tab_explore:
+        st.caption(tr("Calculated from AWS cleaned CSV. Filters affect this tab only; only valid 0/1 labels enter defect-rate denominators.", "基于 AWS 清洗后的 CSV 计算；筛选仅影响本页。缺陷率分母只包含有效 0/1 标签。"))
+        if cleaned is None or cleaned.empty:
+            st.info(label("no_data"))
+        else:
+            data = cleaned.copy()
+            controls = st.columns(3)
+            for holder, col, title in zip(controls, ["machine_id", "shift", "product_id"], [tr("Machine","机器"),tr("Shift","班次"),tr("Product","产品")]):
+                if col in data:
+                    with holder:
+                        choices = sorted(cleaned[col].dropna().astype(str).unique().tolist())
+                        chosen = st.multiselect(title, choices, key="explore_"+col)
+                    if chosen:
+                        data = data[data[col].astype(str).isin(chosen)]
+            if "defect_label" in data:
+                data["label_num"] = data["defect_label"].where(data["defect_label"].isin(["0","1"])).map({"0":0,"1":1})
+                good = data[data["label_num"].notna()].copy()
+                k1,k2,k3 = st.columns(3)
+                k1.metric(tr("Filtered rows","筛选记录"),len(data))
+                k2.metric(tr("Valid labels","有效标签"),len(good))
+                k3.metric(label("rate"),f"{good['label_num'].mean():.2%}" if len(good) else "N/A")
+                a,b=st.columns(2)
+                with a:
+                    st.markdown("**"+tr("Machine × shift defect rate (%)","机器 × 班次缺陷率 (%)")+"**")
+                    if not good.empty and {"machine_id","shift"}.issubset(good.columns):
+                        heat=good.pivot_table(index="machine_id",columns="shift",values="label_num",aggfunc="mean")*100
+                        st.dataframe(heat.round(2),use_container_width=True)
+                    else:
+                        st.caption(label("no_data"))
+                with b:
+                    st.markdown("**"+tr("Defect types","缺陷类型")+"**")
+                    if "defect_type" in good:
+                        counts=good.loc[good["label_num"]==1,"defect_type"].replace("",tr("Unspecified","未标注")).value_counts()
+                        if not counts.empty:
+                            st.bar_chart(counts)
+                        else:
+                            st.caption(label("no_data"))
+                    else:
+                        st.caption(label("no_data"))
+                if {"timestamp","temperature"}.issubset(data.columns):
+                    st.markdown("**"+tr("Temperature monitoring · demo range 60–90°C","温度监控 · 演示区间 60–90°C")+"**")
+                    temp=pd.DataFrame({"time":pd.to_datetime(data["timestamp"],errors="coerce",utc=True),"temperature":pd.to_numeric(data["temperature"],errors="coerce")}).dropna()
+                    temp=temp[temp["temperature"].between(-1e6,1e6)].sort_values("time").tail(4000)
+                    if not temp.empty:
+                        temp["Lower limit"]=60
+                        temp["Upper limit"]=90
+                        st.line_chart(temp.set_index("time"),y_label="°C")
+                        st.caption(tr("Up to 4,000 latest valid readings; illustrative limits only.","最多展示最近 4,000 条有效读数；限值仅为演示。"))
+                    else:
+                        st.caption(label("no_data"))
     with tab_quality:
         flags=report.get("quality_flags",{})
         st.markdown(f'**{label("missing")}**')
         missing=report.get("missing_values_by_column",{})
         if missing:
-            st.dataframe(pd.DataFrame([{"Column":k,"Missing rows":v} for k,v in missing.items()]),hide_index=True,use_container_width=True)
+            st.dataframe(pd.DataFrame([{label("column"):k,tr("Missing rows", "缺失行数"):v} for k,v in missing.items()]),hide_index=True,use_container_width=True)
         else:st.caption(label("no_data"))
         st.markdown(f'**{label("issues")}**')
-        if flags:st.dataframe(pd.DataFrame([{"Flag":k,"Rows":v} for k,v in flags.items()]),hide_index=True,use_container_width=True)
-        else:st.caption(label("warnings_none"))
+        if flags:
+            st.caption(tr("Source: AWS report" if st.session_state.get("flags_source") == "aws" else "Source: Web rules applied to AWS cleaned CSV", "来源：AWS 报告" if st.session_state.get("flags_source") == "aws" else "来源：Web 规则检查 AWS 清洗后的 CSV"))
+            flag_df = pd.DataFrame([{tr("Flag", "预警规则"):_translate_warnings([str(k)])[0], tr("Rows", "触发行数"):v} for k,v in flags.items()])
+            st.metric(tr("Rule triggers (not unique rows)", "规则触发次数（非独立行数）"), int(sum(flags.values())))
+            st.dataframe(flag_df,hide_index=True,use_container_width=True)
+            st.bar_chart(flag_df.set_index(tr("Flag", "预警规则")))
+            st.caption(tr("A row may trigger multiple rules. Warnings are not automatically removed.", "同一记录可触发多条规则；预警记录不会自动删除。"))
+        else:st.caption(tr("No review flags reported.", "未报告质量预警。"))
         if cleaned is not None:
             st.markdown(f'**{label("clean_preview")}**')
             st.dataframe(cleaned.head(100),hide_index=True,use_container_width=True)
+            if {"temperature","defect_label"}.issubset(cleaned.columns):
+                t=pd.to_numeric(cleaned["temperature"],errors="coerce")
+                bad=(~t.between(60,90)) | (~cleaned["defect_label"].isin(["0","1"]))
+                review=cleaned.loc[bad].copy()
+                st.markdown("**"+tr("Records to review: temperature or defect label","待复核记录：温度或缺陷标签")+"**")
+                st.caption(tr("Web checks on cleaned records; row numbers refer to the cleaned CSV, not original input.", "Web 对清洗后记录的检查；行号对应清洗后 CSV，而非原始输入。"))
+                review.insert(0,tr("Cleaned CSV row","清洗后 CSV 行号"),review.index+2)
+                st.dataframe(review.head(100),hide_index=True,use_container_width=True)
+                st.download_button(tr("Download review records","下载待复核记录"),review.to_csv(index=False).encode("utf-8-sig"),file_name="review_records.csv",mime="text/csv")
     with tab_download:
         c1,c2=st.columns(2)
         with c1:
